@@ -1,0 +1,1948 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="light">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>最小闭环原型 · L2 结构化编辑</title>
+<style>
+  /* 配色直接取自上游 innospark 的 themes.css，四套预设保持同名 */
+  :root[data-theme="light"] {
+    --bg:#f6f8fa; --surface:#ffffff; --surface-muted:#eef2f6; --sidebar:#f0f3f6; --sidebar-active:#e6ebf0;
+    --border:#d1d9e0; --border-strong:#bdc6cf; --text:#1f2328; --text-muted:#59636e; --text-subtle:#8c959f;
+    --accent:#0969da; --accent-soft:#ddf4ff; --success:#16a34a; --warning:#d97706; --danger:#dc2626;
+    color-scheme: light;
+  }
+  :root[data-theme="ocean"] {
+    --bg:#f2f7f7; --surface:#ffffff; --surface-muted:#e6f2f1; --sidebar:#ecf4f4; --sidebar-active:#dceceb;
+    --border:#cfe2e0; --border-strong:#b3d2cf; --text:#16302e; --text-muted:#4d6b68; --text-subtle:#8aa5a2;
+    --accent:#0d9488; --accent-soft:#d5f0ec; --success:#16a34a; --warning:#d97706; --danger:#dc2626;
+    color-scheme: light;
+  }
+  :root[data-theme="warm"] {
+    --bg:#faf8f5; --surface:#fffefa; --surface-muted:#f5f0ea; --sidebar:#f0ebe4; --sidebar-active:#e6dfd6;
+    --border:#e5ddd4; --border-strong:#d4c9bc; --text:#2c2418; --text-muted:#7a6b5a; --text-subtle:#a2937f;
+    --accent:#d97706; --accent-soft:#fbeddb; --success:#16a34a; --warning:#b45309; --danger:#dc2626;
+    color-scheme: light;
+  }
+  :root[data-theme="innospark"] {
+    --bg:#f7f7fa; --surface:#ffffff; --surface-muted:#f1f1ff; --sidebar:#f3f3f7; --sidebar-active:#ffffff;
+    --border:#e5e4f4; --border-strong:#d2d0ec; --text:#191922; --text-muted:#545469; --text-subtle:#9d9da9;
+    --accent:#555aff; --accent-soft:#edeeff; --success:#22a06b; --warning:#d99a08; --danger:#dc2626;
+    color-scheme: light;
+  }
+
+  :root {
+    --sans:"PingFang SC","Hiragino Sans GB","Microsoft YaHei",system-ui,sans-serif;
+    --serif:"Songti SC","STSong","SimSun",Georgia,serif;
+    --mono:ui-monospace,"SF Mono",Menlo,Consolas,monospace;
+  }
+
+  * { box-sizing: border-box; }
+  html, body { height: 100%; margin: 0; }
+  body {
+    background: var(--bg); color: var(--text); font-family: var(--sans);
+    font-size: 15px; line-height: 1.7; -webkit-font-smoothing: antialiased;
+  }
+  button { font-family: inherit; cursor: pointer; }
+  ::selection { background: var(--accent-soft); }
+
+  .app { display: grid; grid-template-columns: 15rem minmax(0,1fr) 22rem; height: 100vh; }
+  @media (max-width: 62rem) { .app { grid-template-columns: minmax(0,1fr); height: auto; } }
+  .pane { overflow-y: auto; min-width: 0; }
+
+  /* ---------- 左：文件树 ---------- */
+  .nav { background: var(--sidebar); border-right: 1px solid var(--border); padding: 1rem 0 3rem; }
+  .brand {
+    font-family: var(--mono); font-size: .64rem; letter-spacing: .14em; color: var(--text-subtle);
+    padding: 0 1rem .3rem; text-transform: uppercase;
+  }
+  .whichWiki {
+    padding: 0 1rem .8rem; font-size: .68rem; line-height: 1.4; color: var(--success);
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  .whichWiki.sandbox { color: var(--warning); }
+  .grp {
+    display: flex; align-items: center; gap: .45rem; width: 100%;
+    background: none; border: none; text-align: left;
+    font-family: var(--mono); font-size: .66rem; letter-spacing: .1em; color: var(--text-muted);
+    padding: .55rem 1rem .3rem;
+  }
+  .grp:hover { color: var(--text); }
+  .grp .tw { transition: transform .15s; display: inline-block; font-size: .6rem; color: var(--text-subtle); }
+  .grp.closed .tw { transform: rotate(-90deg); }
+  .grp .n { margin-left: auto; color: var(--text-subtle); }
+  .nav a {
+    display: block; padding: .26rem 1rem .26rem 1.85rem; color: var(--text-muted); text-decoration: none;
+    font-size: .87rem; border-left: 2px solid transparent; white-space: nowrap;
+    overflow: hidden; text-overflow: ellipsis;
+  }
+  .nav a:hover { color: var(--text); background: var(--sidebar-active); }
+  .nav a.on { color: var(--accent); border-left-color: var(--accent); background: var(--surface); font-weight: 500; }
+
+  /* ---------- 中：文档 ---------- */
+  .doc { padding: 1.6rem 2.5rem 4rem; position: relative; }  /* 润色浮标以此为定位原点 */
+  .dochead { display: flex; align-items: flex-start; gap: 1rem; margin-bottom: 1.4rem; }
+  .dochead .grow { min-width: 0; flex: 1; }
+  .crumb { font-family: var(--mono); font-size: .66rem; letter-spacing: .08em; color: var(--text-subtle); }
+  h1.t { font-family: var(--serif); font-size: 1.95rem; margin: .3rem 0 .3rem; }
+  .meta { font-family: var(--mono); font-size: .66rem; color: var(--text-subtle); letter-spacing: .05em; }
+  .mode {
+    border: 1px solid var(--border-strong); background: var(--surface); color: var(--text-muted);
+    padding: .3rem .85rem; font-size: .8rem; border-radius: 4px; white-space: nowrap;
+  }
+  .mode:hover { border-color: var(--accent); color: var(--accent); }
+
+  .md { max-width: 42rem; }
+  .md h2 { font-family: var(--serif); font-size: 1.25rem; margin: 1.7rem 0 .55rem; }
+  .md h3 { font-family: var(--serif); font-size: 1.08rem; margin: 1.3rem 0 .45rem; }
+  .md h4 { font-size: .96rem; margin: 1.1rem 0 .4rem; }
+  .md h5 { font-size: .9rem; color: var(--text-muted); margin: 1rem 0 .35rem; }
+  .md p, .md li { color: var(--text-muted); }
+  .md ul, .md ol { padding-left: 1.4rem; margin: .5rem 0; }
+  .md li > ul, .md li > ol, .md ul ul, .md ul ol, .md ol ol, .md ol ul { margin: .2rem 0; }
+  .md code { font-family: var(--mono); font-size: .82em; background: var(--surface-muted); padding: .06rem .32rem; border-radius: 3px; }
+  .md a.wl { color: var(--accent); text-decoration: none; border-bottom: 1px solid var(--accent-soft); }
+  .md a.wl:hover { border-bottom-color: var(--accent); }
+  .md a.wl.missing { color: var(--text-subtle); border-bottom-style: dotted; }
+
+  .editor {
+    width: 100%; max-width: 42rem; min-height: 24rem; resize: vertical;
+    border: 1px solid var(--border-strong); border-radius: 4px; background: var(--surface); color: var(--text);
+    font-family: var(--mono); font-size: .85rem; line-height: 1.9; padding: 1rem; outline: none;
+  }
+  .editor:focus { border-color: var(--accent); }
+  .hint {
+    max-width: 42rem; margin-top: .6rem; display: flex; flex-wrap: wrap; gap: .5rem 1.1rem;
+    font-family: var(--mono); font-size: .68rem; color: var(--text-subtle);
+  }
+  .hint b { color: var(--text-muted); font-weight: 500; }
+  .free-note {
+    max-width: 42rem; margin: 2.2rem 0 0; padding: .5rem .75rem; border: 1px dashed var(--border);
+    border-radius: 4px; font-family: var(--mono); font-size: .66rem; color: var(--text-subtle);
+  }
+
+  /* ---------- 右：编辑面板 ---------- */
+  .side {
+    border-left: 1px solid var(--border); background: var(--surface);
+    padding: .9rem 1.15rem 1.15rem; display: flex; flex-direction: column; gap: 0;
+  }
+  .sidetop { display: flex; align-items: center; justify-content: space-between; margin-bottom: 1.1rem; }
+  .sidetop span { font-family: var(--mono); font-size: .64rem; letter-spacing: .12em; color: var(--text-subtle); }
+  .gear {
+    border: 1px solid transparent; background: none; color: var(--text-subtle);
+    width: 1.9rem; height: 1.9rem; border-radius: 4px; display: grid; place-items: center; padding: 0;
+  }
+  .gear:hover { color: var(--accent); border-color: var(--border); background: var(--surface-muted); }
+  .gear svg { width: 1rem; height: 1rem; }
+
+  .sec { margin-bottom: 1.5rem; }
+  .sec > h4 {
+    font-family: var(--mono); font-size: .64rem; letter-spacing: .12em; color: var(--text-subtle);
+    margin: 0 0 .6rem; font-weight: 400; display: flex; justify-content: space-between;
+  }
+  .owned { color: var(--accent); }
+  .chips { display: flex; flex-wrap: wrap; gap: .3rem; }
+  .chip {
+    display: inline-flex; align-items: center; gap: .3rem; border: 1px solid var(--border);
+    background: var(--surface-muted); padding: .12rem .5rem; font-size: .81rem; border-radius: 3px;
+  }
+  .chip button { border: none; background: none; color: var(--text-subtle); padding: 0; font-size: .95rem; line-height: 1; }
+  .chip button:hover { color: var(--danger); }
+  .chip.rel { width: 100%; justify-content: space-between; }
+  .add {
+    border: 1px dashed var(--border-strong); background: none; color: var(--text-muted);
+    padding: .12rem .55rem; font-size: .81rem; border-radius: 3px;
+  }
+  .add:hover { border-color: var(--accent); color: var(--accent); }
+  .fromBody { margin-top: .55rem; }
+  .sublabel { font-family: var(--mono); font-size: .6rem; letter-spacing: .1em; color: var(--text-subtle); margin-bottom: .3rem; }
+  .chip.body { background: none; border-style: dashed; cursor: pointer; }
+  .chip.body:hover { border-color: var(--accent); color: var(--accent); }
+  .chip.body .mark { font-family: var(--mono); font-size: .58rem; color: var(--text-subtle); letter-spacing: .06em; }
+  .chip.body.broken { border-color: var(--warning); color: var(--warning); cursor: default; }
+
+  .picker { border: 1px solid var(--accent); border-radius: 4px; background: var(--surface); padding: .55rem; margin-top: .5rem; }
+  .picker input {
+    width: 100%; border: none; border-bottom: 1px solid var(--border); background: none; color: var(--text);
+    font-family: inherit; font-size: .85rem; padding: .2rem 0 .32rem; outline: none;
+  }
+  .picker input:focus { border-bottom-color: var(--accent); }
+  .opts { max-height: 12rem; overflow-y: auto; margin-top: .4rem; }
+  .opt {
+    display: flex; justify-content: space-between; gap: .5rem; width: 100%; text-align: left; border: none;
+    background: none; color: var(--text-muted); padding: .24rem .3rem; font-size: .84rem; border-radius: 3px;
+  }
+  .opt:hover { background: var(--accent-soft); color: var(--accent); }
+  .opt small { font-family: var(--mono); font-size: .65rem; color: var(--text-subtle); }
+
+  .bar { display: flex; gap: .5rem; align-items: center; padding: .8rem 0; border-top: 1px solid var(--border); }
+  .save {
+    border: 1px solid var(--accent); background: var(--accent); color: #fff;
+    padding: .35rem 1rem; font-size: .84rem; border-radius: 4px;
+  }
+  .save[disabled] { opacity: .35; cursor: default; }
+  .ghost { border: 1px solid var(--border-strong); background: none; color: var(--text-muted); padding: .35rem .8rem; font-size: .84rem; border-radius: 4px; }
+  .ghost:hover { border-color: var(--accent); color: var(--accent); }
+  .flash { font-family: var(--mono); font-size: .67rem; color: var(--success); }
+
+  /* ---------- 关系图 ---------- */
+  .graph { margin-top: auto; padding-top: .9rem; border-top: 1px solid var(--border); }
+  .graph h4 {
+    font-family: var(--mono); font-size: .64rem; letter-spacing: .12em; color: var(--text-subtle);
+    margin: 0 0 .5rem; font-weight: 400; display: flex; justify-content: space-between; align-items: center;
+  }
+  .graph .tools { display: flex; gap: .3rem; }
+  .graph .tools button {
+    border: 1px solid var(--border); background: var(--surface); color: var(--text-subtle);
+    width: 1.35rem; height: 1.35rem; font-size: .7rem; line-height: 1; border-radius: 3px; padding: 0;
+  }
+  .graph .tools button:hover { color: var(--accent); border-color: var(--accent); }
+  #gcanvas {
+    width: 100%; height: 15rem; display: block; border: 1px solid var(--border);
+    border-radius: 4px; background: var(--bg); cursor: grab;
+  }
+  #gcanvas.drag { cursor: grabbing; }
+
+  dialog {
+    border: 1px solid var(--border); border-radius: 6px; background: var(--surface); color: var(--text);
+    max-width: 42rem; width: 92%; padding: 0;
+  }
+  dialog::backdrop { background: rgba(0,0,0,.35); }
+  dialog header {
+    display: flex; align-items: center; gap: .75rem;
+    padding: .75rem 1rem; border-bottom: 1px solid var(--border);
+    font-family: var(--mono); font-size: .67rem; letter-spacing: .1em; color: var(--text-subtle);
+  }
+  dialog header .htext { flex: 1; min-width: 0; }
+  dialog header .x {
+    flex: none; border: 1px solid transparent; background: none; color: var(--text-subtle);
+    width: 1.7rem; height: 1.7rem; border-radius: 4px; display: grid; place-items: center;
+    padding: 0; font-size: 1.05rem; line-height: 1; margin: -.25rem -.35rem -.25rem 0;
+  }
+  dialog header .x:hover { background: var(--surface-muted); border-color: var(--border); color: var(--danger); }
+  dialog .dbody { padding: 1rem; }
+  dialog pre { margin: 0; padding: 1rem; overflow: auto; max-height: 62vh; font-family: var(--mono); font-size: .76rem; line-height: 1.75; color: var(--text-muted); }
+  .themes { display: flex; flex-wrap: wrap; gap: .5rem; }
+  .theme-btn {
+    border: 1px solid var(--border-strong); background: var(--surface); color: var(--text-muted);
+    padding: .4rem .8rem; font-size: .84rem; border-radius: 4px; display: flex; align-items: center; gap: .45rem;
+  }
+  .theme-btn.on { border-color: var(--accent); color: var(--accent); }
+  .swatch { width: .8rem; height: .8rem; border-radius: 50%; display: inline-block; }
+  .todo { margin-top: 1.2rem; padding-top: .9rem; border-top: 1px solid var(--border);
+          font-size: .82rem; color: var(--text-subtle); }
+  .todo li { margin: .25rem 0; }
+
+  /* ---------- 教程：角落常驻按钮 + 首次使用提示 ---------- */
+  .fab {
+    position: fixed; bottom: 1.25rem; right: calc(22rem + 1.25rem); z-index: 30;
+    display: inline-flex; align-items: center; gap: .38rem;
+    border: 1px solid var(--border-strong); border-radius: 999px;
+    background: var(--surface); color: var(--text-muted);
+    padding: .38rem .95rem .38rem .8rem; font-size: .82rem;
+    box-shadow: 0 1px 3px rgba(0,0,0,.07), 0 4px 12px rgba(0,0,0,.05);
+  }
+  .fab:hover { border-color: var(--accent); color: var(--accent); }
+  .fab svg { width: .95rem; height: .95rem; }
+  @media (max-width: 62rem) { .fab { right: 1.25rem; } }
+
+  /* 首次使用的提示气泡：非模态，看过教程或手动关掉就不再出现 */
+  .peek {
+    position: fixed; bottom: 3.6rem; right: calc(22rem + 1.25rem); z-index: 30;
+    max-width: 17rem; border: 1px solid var(--accent); border-radius: 6px;
+    background: var(--surface); padding: .6rem .7rem .55rem;
+    box-shadow: 0 2px 6px rgba(0,0,0,.08), 0 8px 22px rgba(0,0,0,.07);
+    font-size: .82rem; color: var(--text-muted); line-height: 1.6;
+  }
+  .peek::after {
+    content: ""; position: absolute; right: 1.6rem; bottom: -.42rem;
+    width: .7rem; height: .7rem; background: var(--surface);
+    border-right: 1px solid var(--accent); border-bottom: 1px solid var(--accent);
+    transform: rotate(45deg);
+  }
+  .peek b { color: var(--accent); font-weight: 500; }
+  .peek .x {
+    position: absolute; top: .1rem; right: .28rem; border: none; background: none;
+    color: var(--text-subtle); font-size: .95rem; line-height: 1; padding: .15rem;
+  }
+  .peek .x:hover { color: var(--danger); }
+  @media (max-width: 62rem) { .peek { right: 1.25rem; } }
+
+  /* ---------- 教程弹窗 ---------- */
+  #tutor { max-width: 46rem; }
+  #tutorBody { max-height: 74vh; overflow-y: auto; }
+  .lede { margin: 0 0 1.1rem; color: var(--text-muted); font-size: .88rem; }
+  .rule { border-top: 1px solid var(--border); padding-top: .9rem; margin-top: .9rem; }
+  .rule:first-of-type { border-top: none; padding-top: 0; margin-top: 0; }
+  .rule > h5 {
+    margin: 0 0 .1rem; font-size: .92rem; color: var(--text);
+    display: flex; align-items: baseline; gap: .5rem;
+  }
+  .rule > h5 code {
+    font-family: var(--mono); font-size: .8rem; color: var(--accent);
+    background: var(--accent-soft); padding: .06rem .4rem; border-radius: 3px;
+  }
+  .rule > p { margin: 0 0 .5rem; font-size: .8rem; color: var(--text-subtle); }
+  .demo { display: grid; grid-template-columns: 1fr 1fr; gap: .8rem; align-items: start; }
+  @media (max-width: 40rem) { .demo { grid-template-columns: 1fr; } }
+  .demo > div { border: 1px solid var(--border); border-radius: 4px; overflow: hidden; }
+  .demo .cap {
+    font-family: var(--mono); font-size: .6rem; letter-spacing: .1em; color: var(--text-subtle);
+    background: var(--surface-muted); padding: .25rem .55rem; border-bottom: 1px solid var(--border);
+  }
+  .demo pre {
+    margin: 0; padding: .55rem .65rem; max-height: none;
+    font-family: var(--mono); font-size: .76rem; line-height: 1.75;
+    color: var(--text-muted); white-space: pre-wrap;
+  }
+  .demo .out { padding: .35rem .65rem .5rem; }
+  .demo .out :is(h2,h3,h4,h5) { margin: .35rem 0 .2rem; }
+  .demo .out :is(p,li) { font-size: .82rem; }
+  .demo .out ul, .demo .out ol { margin: .2rem 0; }
+  .aiNote {
+    margin-top: 1.2rem; border: 1px solid var(--accent); border-radius: 5px;
+    background: var(--accent-soft); padding: .7rem .85rem; font-size: .85rem; color: var(--text);
+  }
+  .aiNote strong { color: var(--accent); }
+  .aiNote p { margin: .35rem 0 0; color: var(--text-muted); font-size: .81rem; }
+
+  /* ---------- 润色：编辑框下方的唤起按钮 ---------- */
+  .polishBar { display: flex; align-items: center; gap: .55rem; max-width: 42rem; margin-top: .9rem; }
+  .polishFab {
+    display: inline-flex; align-items: center; gap: .38rem;
+    border: 1px solid var(--accent); border-radius: 999px;
+    background: var(--accent); color: #fff; padding: .32rem .9rem .32rem .7rem;
+    font-size: .82rem; white-space: nowrap;
+  }
+  .polishFab:hover:not([disabled]) { filter: brightness(1.08); }
+  .polishFab[disabled] {
+    background: none; color: var(--text-subtle);
+    border-color: var(--border); border-style: dashed; cursor: default;
+  }
+  .polishFab svg { width: .9rem; height: .9rem; }
+  .kbd {
+    font-family: var(--mono); font-size: .66rem; color: var(--text-subtle);
+    border: 1px solid var(--border); border-radius: 3px; padding: .1rem .35rem;
+  }
+
+  /* ---------- 润色：建议面板 ---------- */
+  #polish { max-width: 50rem; }
+  #polish .dbody { max-height: 76vh; overflow-y: auto; }
+  .pRow { display: grid; grid-template-columns: 1fr 1fr; gap: .8rem; align-items: start; }
+  @media (max-width: 44rem) { .pRow { grid-template-columns: 1fr; } }
+  .pBox { border: 1px solid var(--border); border-radius: 4px; overflow: hidden; }
+  .pBox.sug { border-color: var(--accent); }
+  .pBox .cap {
+    display: flex; justify-content: space-between; align-items: center; gap: .5rem;
+    font-family: var(--mono); font-size: .6rem; letter-spacing: .1em; color: var(--text-subtle);
+    background: var(--surface-muted); padding: .28rem .55rem; border-bottom: 1px solid var(--border);
+  }
+  .pBox.sug .cap { background: var(--accent-soft); color: var(--accent); border-bottom-color: var(--accent); }
+  .pBox pre {
+    margin: 0; padding: .6rem .7rem; max-height: 20rem; overflow: auto;
+    font-family: var(--mono); font-size: .78rem; line-height: 1.85;
+    color: var(--text-muted); white-space: pre-wrap; word-break: break-word;
+  }
+  .pBox.sug pre { color: var(--text); }
+  .pState {
+    display: flex; align-items: center; gap: .5rem; min-height: 8rem;
+    justify-content: center; color: var(--text-subtle); font-size: .85rem;
+  }
+  .spin {
+    width: .9rem; height: .9rem; border: 2px solid var(--border-strong); border-top-color: var(--accent);
+    border-radius: 50%; animation: sp .7s linear infinite;
+  }
+  @keyframes sp { to { transform: rotate(360deg); } }
+  .pErr {
+    border: 1px solid var(--warning); border-radius: 4px; background: var(--surface);
+    padding: .7rem .85rem; font-size: .84rem; color: var(--text-muted);
+  }
+  .pErr b { color: var(--warning); }
+  .pErr code {
+    display: block; margin-top: .4rem; font-family: var(--mono); font-size: .74rem;
+    color: var(--text-subtle); white-space: pre-wrap;
+  }
+  .pAsk { margin-top: .9rem; }
+  .pAsk label {
+    display: block; font-family: var(--mono); font-size: .62rem; letter-spacing: .1em;
+    color: var(--text-subtle); margin-bottom: .3rem;
+  }
+  .pAsk .row { display: flex; gap: .5rem; }
+  .pAsk input {
+    flex: 1; min-width: 0; border: 1px solid var(--border-strong); border-radius: 4px;
+    background: var(--surface); color: var(--text); font-family: inherit; font-size: .84rem;
+    padding: .35rem .6rem; outline: none;
+  }
+  .pAsk input:focus { border-color: var(--accent); }
+  .pBar {
+    display: flex; align-items: center; gap: .5rem; flex-wrap: wrap;
+    margin-top: 1rem; padding-top: .85rem; border-top: 1px solid var(--border);
+  }
+  .pBar .grow { flex: 1; }
+  .pNote {
+    margin-top: .85rem; border: 1px dashed var(--border-strong); border-radius: 4px;
+    padding: .5rem .7rem; font-size: .78rem; color: var(--text-subtle); line-height: 1.65;
+  }
+  .pNote b { color: var(--text-muted); font-weight: 500; }
+  .pMeta { font-family: var(--mono); font-size: .62rem; color: var(--text-subtle); letter-spacing: .04em; }
+
+  /* ---------- S-C：从资料生成 + 审阅 ---------- */
+  .newBtn {
+    display: flex; align-items: center; gap: .4rem; width: calc(100% - 2rem); margin: .2rem 1rem .5rem;
+    border: 1px dashed var(--border-strong); border-radius: 4px; background: none; color: var(--text-muted);
+    padding: .34rem .6rem; font-size: .82rem;
+  }
+  .newBtn:hover { border-color: var(--accent); color: var(--accent); }
+  #gen { max-width: 54rem; }
+  #genBody { max-height: 78vh; overflow-y: auto; }
+  .drop {
+    border: 1px dashed var(--border-strong); border-radius: 6px; padding: 1.4rem 1rem;
+    text-align: center; color: var(--text-muted); font-size: .88rem;
+  }
+  .drop.over { border-color: var(--accent); background: var(--accent-soft); }
+  .drop b { color: var(--accent); font-weight: 500; }
+  .srcList { display: flex; flex-direction: column; gap: .35rem; margin-top: .8rem; }
+  .srcItem {
+    display: flex; align-items: center; gap: .6rem; width: 100%; text-align: left;
+    border: 1px solid var(--border); border-radius: 4px; background: var(--surface);
+    padding: .45rem .65rem; font-size: .85rem; color: var(--text);
+  }
+  .srcItem:hover { border-color: var(--accent); }
+  .srcItem.on { border-color: var(--accent); background: var(--accent-soft); }
+  .srcItem .grow { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .srcItem small { font-family: var(--mono); font-size: .64rem; color: var(--text-subtle); }
+  .frozen {
+    font-family: var(--mono); font-size: .6rem; letter-spacing: .06em;
+    border: 1px solid var(--success); color: var(--success); border-radius: 3px; padding: .05rem .35rem;
+  }
+  .frozen.bad { border-color: var(--danger); color: var(--danger); }
+
+  .fact {
+    border: 1px solid var(--border); border-left-width: 3px; border-radius: 4px;
+    padding: .55rem .7rem; margin-bottom: .5rem;
+  }
+  .fact.okv { border-left-color: var(--success); }
+  .fact.bad { border-left-color: var(--danger); background: var(--surface-muted); }
+  .fact .ftop { display: flex; align-items: flex-start; gap: .5rem; }
+  .fact .ftext { flex: 1; font-size: .88rem; }
+  .fact.bad .ftext { color: var(--text-subtle); text-decoration: line-through; }
+  .fact .badge {
+    font-family: var(--mono); font-size: .58rem; letter-spacing: .06em; white-space: nowrap;
+    border-radius: 3px; padding: .08rem .35rem; border: 1px solid currentColor;
+  }
+  .fact.okv .badge { color: var(--success); }
+  .fact.bad .badge { color: var(--danger); }
+  .fact blockquote {
+    margin: .45rem 0 0; padding: .3rem .6rem; border-left: 2px solid var(--border-strong);
+    font-size: .78rem; color: var(--text-subtle); line-height: 1.7;
+    background: var(--bg); border-radius: 0 3px 3px 0;
+  }
+  .fact.bad blockquote { border-left-color: var(--danger); }
+  .fact .why { margin-top: .35rem; font-size: .76rem; color: var(--danger); }
+  .tally {
+    display: flex; gap: 1rem; flex-wrap: wrap; align-items: center;
+    border: 1px solid var(--border); border-radius: 4px; padding: .5rem .75rem;
+    font-size: .84rem; margin-bottom: .9rem;
+  }
+  .tally .n { font-family: var(--mono); font-weight: 600; }
+  .tally .good { color: var(--success); }
+  .tally .bad { color: var(--danger); }
+  .genField { margin-bottom: .8rem; }
+  .genField label {
+    display: block; font-family: var(--mono); font-size: .62rem; letter-spacing: .1em;
+    color: var(--text-subtle); margin-bottom: .25rem;
+  }
+  .genField input, .genField textarea {
+    width: 100%; border: 1px solid var(--border-strong); border-radius: 4px; background: var(--surface);
+    color: var(--text); font-family: inherit; font-size: .86rem; padding: .35rem .6rem; outline: none;
+  }
+  .genField input:focus, .genField textarea:focus { border-color: var(--accent); }
+  .genField textarea { resize: vertical; font-family: var(--mono); font-size: .8rem; line-height: 1.75; }
+  .segDel { border: none; background: none; color: var(--text-subtle); font-size: .7rem; padding: 0 .2rem; }
+  .segDel:hover { color: var(--danger); }
+  .modeTabs { display: flex; gap: .3rem; margin-bottom: .9rem; }
+  .modeTab {
+    border: 1px solid var(--border); background: var(--surface); color: var(--text-muted);
+    padding: .3rem .8rem; font-size: .82rem; border-radius: 4px;
+  }
+  .modeTab:hover { border-color: var(--accent); color: var(--accent); }
+  .modeTab.on { border-color: var(--accent); background: var(--accent-soft); color: var(--accent); font-weight: 500; }
+
+  /* ---------- 设置里的模型区 ---------- */
+  .cfgHint { font-size: .76rem; color: var(--text-subtle); line-height: 1.65; margin-top: .35rem; }
+  .cfgHint code {
+    font-family: var(--mono); font-size: .93em; background: var(--surface-muted);
+    padding: .04rem .25rem; border-radius: 3px; word-break: break-all;
+  }
+  .cfgHint b { color: var(--text-muted); font-weight: 500; }
+  .cfgRow { display: flex; align-items: center; gap: .45rem; margin-top: .55rem; flex-wrap: wrap; }
+  .cfgSel {
+    flex: 1; min-width: 12rem; border: 1px solid var(--border-strong); border-radius: 4px;
+    background: var(--surface); color: var(--text); font-family: inherit; font-size: .82rem;
+    padding: .28rem .5rem; outline: none;
+  }
+  .cfgSel:focus { border-color: var(--accent); }
+</style>
+</head>
+<body>
+
+<div class="app">
+  <nav class="pane nav" id="nav"></nav>
+  <main class="pane doc" id="doc"></main>
+  <aside class="pane side" id="side"></aside>
+</div>
+
+<button class="fab" id="tutorBtn" type="button" title="正文怎么写">
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M4 5.5A1.5 1.5 0 0 1 5.5 4H10a2.5 2.5 0 0 1 2 1 2.5 2.5 0 0 1 2-1h4.5A1.5 1.5 0 0 1 20 5.5v12a1.5 1.5 0 0 1-1.5 1.5H14a2.5 2.5 0 0 0-2 1 2.5 2.5 0 0 0-2-1H5.5A1.5 1.5 0 0 1 4 17.5z"/>
+    <path d="M12 6.5v13"/>
+  </svg>教程</button>
+
+<dialog id="src"><header id="srcTitle"></header><pre id="srcBody"></pre></dialog>
+
+<dialog id="tutor">
+  <header>教程 · 正文怎么写</header>
+  <div class="dbody" id="tutorBody"></div>
+</dialog>
+
+<dialog id="polish">
+  <header id="polishHead"></header>
+  <div class="dbody" id="polishBody"></div>
+</dialog>
+
+<dialog id="gen">
+  <header id="genHead"></header>
+  <div class="dbody" id="genBody"></div>
+</dialog>
+
+<dialog id="cfg">
+  <header>设置</header>
+  <div class="dbody">
+    <div class="sec"><h4>配色（取自 innospark themes.css）</h4>
+      <div class="themes" id="themes"></div>
+    </div>
+    <div class="sec"><h4>模型（AI 功能）</h4>
+      <div id="polishStatus" style="font-size:.84rem;color:var(--text-muted)">检测中…</div>
+    </div>
+  </div>
+</dialog>
+
+<script>
+/* 待办（用户已确认排期，本轮不实现）：
+   1. 光标处开子代理润色语言 */
+
+const S = {
+  catalog: { pages: [], tags: [] }, page: null,
+  tags: [], links: [], body: "",
+  dirty: false, picking: null, editing: false,
+  collapsed: new Set(), theme: localStorage.getItem("theme") || "light",
+  graph: null,
+};
+const $ = (id) => document.getElementById(id);
+
+/* 每个弹窗的标题栏右侧都放一个叉号——Esc 仍然可用，但不该是唯一的出路。
+   标题文字统一走 .htext，这样改标题不会把叉号一起冲掉。 */
+function installCloseButtons() {
+  for (const dlg of document.querySelectorAll("dialog")) {
+    const head = dlg.querySelector("header");
+    if (!head || head.querySelector(".x")) continue;
+    const text = document.createElement("span");
+    text.className = "htext";
+    text.textContent = head.textContent.trim();
+    head.textContent = "";
+    const x = document.createElement("button");
+    x.className = "x"; x.type = "button"; x.title = "关闭（Esc）"; x.textContent = "×";
+    x.onclick = () => dlg.close();
+    head.append(text, x);
+  }
+}
+function setHeader(id, text) {
+  const head = $(id);
+  const slot = head.querySelector(".htext");
+  if (slot) slot.textContent = text; else head.textContent = text;
+}
+installCloseButtons();
+const TYPE_LABEL = { "source-summary": "资料摘要", concept: "概念", entity: "实体", analysis: "分析" };
+const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+
+/* ---------------- Markdown 渲染（一～五级标题、有序/无序列表、行内标记） ---------------- */
+function renderMd(src) {
+  const out = []; let items = null;
+  const inline = (t) => esc(t)
+    .replace(/\[\[([^\]]+)\]\]/g, (_, n) => `<a class="wl" href="#" data-link="${esc(n)}">${esc(n)}</a>`)
+    .replace(/`([^`]+)`/g, "<code>$1</code>")
+    .replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>");
+
+  // 按缩进层级把连续的列表项组装成嵌套列表（Tab 记作 4 空格）
+  const nest = (list) => {
+    let i = 0;
+    const build = (level) => {
+      const tag = list[i].tag;
+      let s = `<${tag}>`;
+      while (i < list.length && list[i].indent >= level) {
+        if (list[i].indent > level) { s += build(list[i].indent); continue; }
+        s += `<li>${list[i].html}`;
+        i++;
+        if (i < list.length && list[i].indent > level) s += build(list[i].indent);
+        s += `</li>`;
+      }
+      return s + `</${tag}>`;
+    };
+    return build(list[0].indent);
+  };
+  const flush = () => { if (items) { out.push(nest(items)); items = null; } };
+
+  for (const raw of src.split("\n")) {
+    const line = raw.replace(/\t/g, "    ").trimEnd();
+    if (!line.trim()) { flush(); continue; }
+    const indent = line.length - line.trimStart().length;
+    const body = line.trimStart();
+    let m;
+    if ((m = body.match(/^(#{1,5})\s+(.*)/)) && indent === 0) {
+      flush();
+      const lvl = m[1].length;
+      if (lvl === 1) continue;                   // 一级标题即页面标题，已在页头显示
+      out.push(`<h${lvl}>${inline(m[2])}</h${lvl}>`);
+    } else if ((m = body.match(/^(\d+)\.\s+(.*)/))) {
+      (items ??= []).push({ indent, tag: "ol", html: inline(m[2]) });
+    } else if ((m = body.match(/^[-*]\s+(.*)/))) {
+      (items ??= []).push({ indent, tag: "ul", html: inline(m[1]) });
+    } else { flush(); out.push(`<p>${inline(line)}</p>`); }
+  }
+  flush();
+  return out.join("");
+}
+
+/* ---------------- 启动 ---------------- */
+async function boot() {
+  document.documentElement.dataset.theme = S.theme;
+  S.catalog = await (await fetch("/api/catalog")).json();
+  drawNav();
+  const first = S.catalog.pages.find((p) => p.type === "concept") ?? S.catalog.pages[0];
+  if (first) await open(first.path);
+  maybePeek();
+  await loadGraph();
+  await handoffFromUrl();
+}
+
+/**
+ * 从 InnoSpark 的寄存区交接过来：`?source=<id>` 直接进「从资料生成」，
+ * 再带 `&auto=1` 就连编译一起启动，用户打开就看见结果在跑。
+ *
+ * 交接只传一个 sourceId，不传内容——内容已经由寄存区 POST 到 /api/sources 冻结好了。
+ * 这样 URL 短、可刷新、可分享，也不会把一大段对话塞进地址栏。
+ */
+async function handoffFromUrl() {
+  const q = new URLSearchParams(location.search);
+  const sourceId = q.get("source");
+  if (!sourceId) return;
+
+  // 用完就把参数抹掉，免得刷新时又编译一次（模型调用要花钱）
+  history.replaceState(null, "", location.pathname);
+
+  await openGen();
+  const hit = G.sources.find((s) => s.sourceId === sourceId);
+  if (!hit) {
+    G.error = `交接过来的资料找不到了（${sourceId}）。可能是插件重启过、或者冻结区被清了。`;
+    return drawGen();
+  }
+  G.sourceId = sourceId;
+  G.topic = q.get("topic") ?? "";
+  drawGen();
+  if (q.get("auto") === "1") await runCompile();
+}
+
+/* ---------------- 左：可折叠文件树 ---------------- */
+function drawNav() {
+  const nav = $("nav");
+  const w = S.catalog.wiki;
+  // 如实标明正在编辑哪一份：沙盒样例不能看起来像真实知识库
+  nav.innerHTML = `<div class="brand">L2 · 结构化编辑</div>` +
+    (w ? `<div class="whichWiki${w.live ? "" : " sandbox"}" title="${esc(w.dir)}">${
+      w.live ? "● " + esc(w.from) : "○ " + esc(w.from) + "（非真实库）"}</div>` : "");
+  const add = document.createElement("button");
+  add.className = "newBtn"; add.type = "button";
+  add.innerHTML = `<span style="font-size:.95rem;line-height:1">＋</span>从资料生成新页`;
+  add.onclick = openGen;
+  nav.append(add);
+  for (const [type, label] of Object.entries(TYPE_LABEL)) {
+    const items = S.catalog.pages.filter((p) => p.type === type);
+    if (!items.length) continue;
+    const closed = S.collapsed.has(type);
+    const head = document.createElement("button");
+    head.className = "grp" + (closed ? " closed" : "");
+    head.type = "button";
+    head.innerHTML = `<span class="tw">▾</span><span>${label}</span><span class="n">${items.length}</span>`;
+    head.onclick = () => { closed ? S.collapsed.delete(type) : S.collapsed.add(type); drawNav(); };
+    nav.append(head);
+    if (closed) continue;
+    for (const p of items) {
+      const a = document.createElement("a");
+      a.href = "#"; a.textContent = p.title; a.title = p.title;
+      if (S.page && S.page.path === p.path) a.className = "on";
+      a.onclick = (e) => { e.preventDefault(); open(p.path); };
+      nav.append(a);
+    }
+  }
+}
+
+/* ---------------- 中：文档（阅读 / 编辑） ---------------- */
+async function open(path) {
+  if (S.dirty && !confirm("有未保存的改动，确定离开？")) return;
+  S.page = await (await fetch(`/api/page?path=${encodeURIComponent(path)}`)).json();
+  S.tags = [...S.page.tags]; S.links = [...S.page.links]; S.body = S.page.body;
+  S.dirty = false; S.picking = null; S.editing = false;
+  drawNav(); drawDoc(); drawSide(); drawGraph();
+  $("doc").scrollTop = 0;
+}
+
+function drawDoc() {
+  const p = S.page;
+  const doc = $("doc");
+  doc.innerHTML = "";
+
+  const head = document.createElement("div");
+  head.className = "dochead";
+  head.innerHTML = `<div class="grow">
+      <div class="crumb">${esc(p.path)}</div>
+      <h1 class="t">${esc(p.title)}</h1>
+      <div class="meta">${esc(TYPE_LABEL[p.type] ?? p.type)} · 更新于 ${esc(p.updated || "—")} · ${esc(p.status || "draft")}</div>
+    </div>`;
+  const toggle = document.createElement("button");
+  toggle.className = "mode";
+  toggle.textContent = S.editing ? "完成编辑" : "编辑正文";
+  toggle.onclick = () => { S.editing = !S.editing; drawDoc(); };
+  head.append(toggle);
+  doc.append(head);
+
+  if (S.editing) {
+    const ta = document.createElement("textarea");
+    ta.className = "editor";
+    ta.value = S.body;
+    ta.spellcheck = false;
+    ta.oninput = () => { S.body = ta.value; if (!S.dirty) { S.dirty = true; drawSide(); } };
+    ta.onkeydown = (e) => {
+      if (e.key !== "Tab") return;              // Tab 缩进，不跳焦点
+      e.preventDefault();
+      const { selectionStart: a, selectionEnd: b } = ta;
+      ta.value = ta.value.slice(0, a) + "\t" + ta.value.slice(b);
+      ta.selectionStart = ta.selectionEnd = a + 1;
+      S.body = ta.value; if (!S.dirty) { S.dirty = true; drawSide(); }
+    };
+    // 选区一变，下方的润色按钮就跟着变状态
+    const refresh = () => setTimeout(updatePolishFab, 0);
+    ta.onmouseup = refresh;
+    ta.onkeyup = refresh;
+    ta.onselect = refresh;
+    doc.append(ta);
+    const hint = document.createElement("div");
+    hint.className = "hint";
+    hint.innerHTML = `<span><b>#</b> 标题，一到五级</span>
+      <span><b>1.</b> 序号，Tab 缩进</span>
+      <span><b>-</b> 要点</span>
+      <span><b>[[页面名]]</b> 链到别的页</span>`;
+    const more = document.createElement("a");
+    more.href = "#"; more.textContent = "看教程 →";
+    more.style.cssText = "color:var(--accent);text-decoration:none";
+    more.onclick = (e) => { e.preventDefault(); openTutor(); };
+    hint.append(more);
+    doc.append(hint);
+
+    // 唤起润色的入口。没选中东西时是灰的，并写明该怎么用
+    const pbar = document.createElement("div");
+    pbar.className = "polishBar";
+    const btn = document.createElement("button");
+    btn.className = "polishFab"; btn.id = "polishFab"; btn.type = "button";
+    btn.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M12 3l1.9 4.6L18.5 9.5 13.9 11.4 12 16l-1.9-4.6L5.5 9.5l4.6-1.9z"/>
+        <path d="M18 15l.8 2 2 .8-2 .8-.8 2-.8-2-2-.8 2-.8z"/>
+      </svg><span class="lbl"></span>`;
+    btn.onclick = () => { const s = polishSelection(); if (s?.text.trim()) openPolish(s); };
+    const kbd = document.createElement("span");
+    kbd.className = "kbd";
+    kbd.textContent = navigator.platform.includes("Mac") ? "⌘K" : "Ctrl+K";
+    pbar.append(btn, kbd);
+    doc.append(pbar);
+    setTimeout(updatePolishFab, 0);
+  } else {
+    const md = document.createElement("div");
+    md.className = "md";
+    md.innerHTML = renderMd(S.body);
+    doc.append(md);
+    for (const a of md.querySelectorAll("a.wl")) {
+      const t = S.catalog.pages.find((x) => x.title === a.dataset.link);
+      if (!t) a.classList.add("missing");
+      a.onclick = (e) => {
+        e.preventDefault();
+        if (t) open(t.path); else alert("这一页还不存在：" + a.dataset.link);
+      };
+    }
+  }
+
+  const note = document.createElement("p");
+  note.className = "free-note";
+  note.textContent = "以上为用户自由区：标签与「相关知识」由系统托管，其余内容读写全程原样保留。";
+  doc.append(note);
+}
+
+/* ---------------- 右：编辑面板 ---------------- */
+function drawSide() {
+  const side = $("side");
+  side.innerHTML = "";
+
+  const top = document.createElement("div");
+  top.className = "sidetop";
+  top.innerHTML = `<span>本页属性</span>`;
+  const gear = document.createElement("button");
+  gear.className = "gear"; gear.type = "button"; gear.title = "设置";
+  gear.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7">
+    <circle cx="12" cy="12" r="3.2"/><path d="M19.4 15a1.6 1.6 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.6 1.6 0 0 0-1.8-.3 1.6 1.6 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1A1.6 1.6 0 0 0 9 19.4a1.6 1.6 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.6 1.6 0 0 0 .3-1.8 1.6 1.6 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1A1.6 1.6 0 0 0 4.6 9a1.6 1.6 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.6 1.6 0 0 0 1.8.3H9a1.6 1.6 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.6 1.6 0 0 0 1 1.5 1.6 1.6 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.6 1.6 0 0 0-.3 1.8V9a1.6 1.6 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.6 1.6 0 0 0-1.5 1z"/></svg>`;
+  gear.onclick = openSettings;
+  top.append(gear);
+  side.append(top);
+
+  side.append(section("标签", S.tags, (t) => { S.tags = S.tags.filter((x) => x !== t); touch(); }, "tag"));
+  side.append(section("相关知识", S.links, (t) => { S.links = S.links.filter((x) => x !== t); touch(); }, "link",
+    S.page?.bodyLinks ?? []));
+
+  const bar = document.createElement("div");
+  bar.className = "bar";
+  const save = document.createElement("button");
+  save.className = "save"; save.textContent = "保存并写回 md"; save.disabled = !S.dirty;
+  save.onclick = doSave;
+  const view = document.createElement("button");
+  view.className = "ghost"; view.textContent = "看源码"; view.onclick = showSource;
+  const flash = document.createElement("span");
+  flash.className = "flash"; flash.id = "flash";
+  bar.append(save, view, flash);
+  side.append(bar);
+
+  side.append(graphPanel());
+}
+
+function section(title, items, onRemove, kind, fromBody = []) {
+  const sec = document.createElement("div");
+  sec.className = "sec";
+  sec.innerHTML = `<h4>${title}<span class="owned">系统托管</span></h4>`;
+  const chips = document.createElement("div");
+  chips.className = "chips";
+  for (const it of items) {
+    const el = document.createElement("span");
+    el.className = "chip" + (kind === "link" ? " rel" : "");
+    el.innerHTML = `<span>${esc(it)}</span>`;
+    const b = document.createElement("button");
+    b.type = "button"; b.textContent = "×"; b.title = "移除";
+    b.onclick = () => onRemove(it);
+    el.append(b);
+    chips.append(el);
+  }
+  const add = document.createElement("button");
+  add.className = "add"; add.type = "button"; add.textContent = "+ 添加";
+  add.onclick = () => { S.picking = S.picking === kind ? null : kind; drawSide(); };
+  chips.append(add);
+  sec.append(chips);
+  if (S.picking === kind) sec.append(picker(kind));
+
+  // 正文里手写的 [[链接]] 同样是正式关联，但载体是正文，
+  // 所以这里只读回显，删除请到正文里删——不替用户动他的句子
+  const extra = fromBody.filter((l) => !items.includes(l.title));
+  if (extra.length) {
+    const sub = document.createElement("div");
+    sub.className = "fromBody";
+    sub.innerHTML = `<div class="sublabel">写在正文里</div>`;
+    const box = document.createElement("div");
+    box.className = "chips";
+    for (const l of extra) {
+      const el = document.createElement("span");
+      el.className = "chip rel body" + (l.resolved ? "" : " broken");
+      el.title = l.resolved ? "在正文中手写，点击跳转" : "这一页还不存在";
+      el.innerHTML = `<span>${esc(l.title)}</span><span class="mark">正文</span>`;
+      if (l.resolved) el.onclick = () => open(l.path);
+      box.append(el);
+    }
+    sub.append(box);
+    sec.append(sub);
+  }
+  return sec;
+}
+
+function picker(kind) {
+  const box = document.createElement("div");
+  box.className = "picker";
+  const input = document.createElement("input");
+  input.placeholder = kind === "tag" ? "搜索已有标签，或输入新标签后回车" : "搜索知识库里的页面";
+  const opts = document.createElement("div");
+  opts.className = "opts";
+  const paint = () => {
+    const q = input.value.trim().toLowerCase();
+    opts.innerHTML = "";
+    const source = kind === "tag"
+      ? S.catalog.tags.filter((t) => !S.tags.includes(t.name)).map((t) => ({ label: t.name, hint: `${t.count} 页在用` }))
+      : S.catalog.pages.filter((p) => p.path !== S.page.path && !S.links.includes(p.title))
+          .map((p) => ({ label: p.title, hint: TYPE_LABEL[p.type] ?? p.type }));
+    const hits = source.filter((o) => !q || o.label.toLowerCase().includes(q)).slice(0, 40);
+    for (const o of hits) {
+      const b = document.createElement("button");
+      b.className = "opt"; b.type = "button";
+      b.innerHTML = `<span>${esc(o.label)}</span><small>${esc(o.hint)}</small>`;
+      b.onclick = () => pick(kind, o.label);
+      opts.append(b);
+    }
+    if (!hits.length) {
+      const empty = document.createElement("div");
+      empty.className = "opt";
+      empty.textContent = kind === "tag" && q ? `回车新建标签「${q}」` : "没有匹配项";
+      opts.append(empty);
+    }
+  };
+  input.oninput = paint;
+  input.onkeydown = (e) => { if (e.key === "Enter" && kind === "tag" && input.value.trim()) pick("tag", input.value.trim()); };
+  box.append(input, opts);
+  paint();
+  setTimeout(() => input.focus(), 0);
+  return box;
+}
+
+function pick(kind, value) {
+  if (kind === "tag") { if (!S.tags.includes(value)) S.tags.push(value); }
+  else if (!S.links.includes(value)) S.links.push(value);
+  S.picking = null;
+  touch();
+}
+function touch() { S.dirty = true; drawSide(); drawGraph(); }
+
+async function doSave() {
+  const r = await fetch("/api/page", {
+    method: "PUT", headers: { "content-type": "application/json" },
+    body: JSON.stringify({ path: S.page.path, tags: S.tags, links: S.links, body: S.body }),
+  });
+  const out = await r.json();
+  if (!r.ok) return alert("保存失败：" + (out.error ?? r.status));
+  S.dirty = false;
+  S.catalog = await (await fetch("/api/catalog")).json();
+  S.page = await (await fetch(`/api/page?path=${encodeURIComponent(S.page.path)}`)).json();
+  S.body = S.page.body; S.tags = [...S.page.tags]; S.links = [...S.page.links];
+  drawNav(); drawDoc(); drawSide();
+  await loadGraph();
+  const f = $("flash");
+  if (f) {
+    f.textContent = out.reverseSynced.length ? `已写回，并反向同步到 ${out.reverseSynced.join("、")}` : "已写回 md";
+    setTimeout(() => { const g = $("flash"); if (g) g.textContent = ""; }, 4000);
+  }
+}
+
+async function showSource() {
+  const p = await (await fetch(`/api/page?path=${encodeURIComponent(S.page.path)}`)).json();
+  const lines = ["---", `title: ${p.title}`, `type: ${p.type}`, `tags: [${p.tags.join(", ")}]`,
+    `updated: ${p.updated}`, "---", "", p.body.trim()];
+  if (p.links.length) lines.push("", "## 相关知识", "", ...p.links.map((l) => `- [[${l}]]`));
+  setHeader("srcTitle", `磁盘上的真实文件 · ${p.path}`);
+  $("srcBody").textContent = lines.join("\n");
+  $("src").showModal();
+}
+$("src").onclick = (e) => { if (e.target.id === "src") $("src").close(); };
+
+/* ---------------- 设置 ---------------- */
+const THEMES = [
+  { id: "light", name: "浅蓝灰", swatch: "#0969da" },
+  { id: "ocean", name: "青", swatch: "#0d9488" },
+  { id: "warm", name: "橙", swatch: "#d97706" },
+  { id: "innospark", name: "靛紫", swatch: "#555aff" },
+];
+function openSettings() {
+  const box = $("themes");
+  box.innerHTML = "";
+  for (const t of THEMES) {
+    const b = document.createElement("button");
+    b.className = "theme-btn" + (S.theme === t.id ? " on" : "");
+    b.type = "button";
+    b.innerHTML = `<span class="swatch" style="background:${t.swatch}"></span>${t.name}`;
+    b.onclick = () => {
+      S.theme = t.id;
+      localStorage.setItem("theme", t.id);
+      document.documentElement.dataset.theme = t.id;
+      openSettings(); drawGraph();
+    };
+    box.append(b);
+  }
+  paintPolishStatus();
+  $("cfg").showModal();
+}
+
+// 如实显示模型接没接上、配置从哪来，别让人以为「点了没反应」是自己操作错了。
+// 这里永远不显示、也不接收 apiKey——密钥只走配置文件或环境变量
+async function paintPolishStatus() {
+  const el = $("polishStatus");
+  el.textContent = "检测中…";
+  let s;
+  try {
+    s = await (await fetch("/api/polish/status")).json();
+  } catch (err) {
+    el.innerHTML = `<span style="color:var(--warning)">检测失败</span>
+      <div class="cfgHint">${esc(err.message)}</div>`;
+    return;
+  }
+  el.innerHTML = "";
+
+  // 只说「已配置」，不说「已接通」——到这一步我们只读了配置文件，
+  // 还没跟模型说过一句话。key 有没有效，只有真打一次才知道（红线 5）
+  const line = document.createElement("div");
+  line.innerHTML = s.ready
+    ? `<span style="color:var(--success)">● 已配置</span>
+       <span class="pMeta" style="margin-left:.4rem">${esc(s.providerId)} / ${esc(s.modelId)}</span>`
+    : `<span style="color:var(--warning)">● 未配置</span>`;
+  el.append(line);
+  if (s.ready) {
+    const caveat = document.createElement("div");
+    caveat.className = "cfgHint";
+    caveat.textContent = "这只表示配置读到了，还没验证 key 是否有效。点「测试连接」真打一次。";
+    el.append(caveat);
+  }
+
+  if (s.configPath) {
+    const from = document.createElement("div");
+    from.className = "cfgHint";
+    from.innerHTML = `配置来自 <b>${esc(s.configFrom ?? "?")}</b><br><code>${esc(s.configPath)}</code>` +
+      (s.keyFrom ? `<br>密钥来自 ${esc(s.keyFrom)}` : "");
+    el.append(from);
+  }
+
+  if (!s.ready) {
+    const why = document.createElement("div");
+    why.className = "cfgHint";
+    why.style.color = "var(--warning)";
+    why.style.whiteSpace = "pre-wrap";
+    why.textContent = s.error ?? "";
+    el.append(why);
+    const how = document.createElement("div");
+    how.className = "cfgHint";
+    how.innerHTML = `装了 InnoSpark 的话会自动读它的 <code>config.json</code>，不用另配。<br>
+      否则二选一：<code>export INNO_API_KEY=…</code>，
+      或把 <code>model.config.example.json</code> 复制成 <code>model.config.json</code> 填进去。<br>
+      改完点下面的「重新检测」。`;
+    el.append(how);
+  }
+
+  // 有多个模型时才给选择器。只在配置已有的模型里挑，不接受手输
+  const options = [];
+  for (const p of s.providers ?? []) {
+    for (const m of p.models ?? []) {
+      options.push({ providerId: p.providerId, modelId: m.id, name: m.name, hasKey: p.hasKey });
+    }
+  }
+  if (options.length > 1) {
+    const wrap = document.createElement("div");
+    wrap.className = "cfgRow";
+    const sel = document.createElement("select");
+    sel.className = "cfgSel";
+    for (const o of options) {
+      const opt = document.createElement("option");
+      opt.value = `${o.providerId} ${o.modelId}`;
+      opt.textContent = `${o.providerId} / ${o.modelId}${o.hasKey ? "" : "（无 key）"}`;
+      if (s.providerId === o.providerId && s.modelId === o.modelId) opt.selected = true;
+      sel.append(opt);
+    }
+    sel.onchange = async () => {
+      const [providerId, modelId] = sel.value.split(" ");
+      const r = await fetch("/api/polish/model", {
+        method: "POST", headers: { "content-type": "application/json" },
+        body: JSON.stringify({ providerId, modelId }),
+      });
+      if (!r.ok) alert("换不了：" + ((await r.json()).error ?? r.status));
+      paintPolishStatus();
+    };
+    wrap.append(sel);
+    if (s.picked) {
+      const reset = document.createElement("button");
+      reset.className = "ghost"; reset.type = "button"; reset.textContent = "用默认";
+      reset.style.fontSize = ".78rem";
+      reset.onclick = async () => {
+        await fetch("/api/polish/model", {
+          method: "POST", headers: { "content-type": "application/json" },
+          body: JSON.stringify({ reset: true }),
+        });
+        paintPolishStatus();
+      };
+      wrap.append(reset);
+    }
+    el.append(wrap);
+    const note = document.createElement("div");
+    note.className = "cfgHint";
+    note.textContent = "只在本次运行内生效，重启回到配置文件的默认值——不会改动你 InnoSpark 的配置。";
+    el.append(note);
+  }
+
+  const row = document.createElement("div");
+  row.className = "cfgRow";
+  const again = document.createElement("button");
+  again.className = "ghost"; again.type = "button"; again.textContent = "重新读配置";
+  again.style.fontSize = ".78rem";
+  again.onclick = paintPolishStatus;
+  row.append(again);
+
+  // 真打一次最小调用。key 无效、额度用尽、模型名写错，都只有这样才看得出来
+  const test = document.createElement("button");
+  test.className = "ghost"; test.type = "button"; test.textContent = "测试连接";
+  test.style.fontSize = ".78rem";
+  test.disabled = !s.ready;
+  const out = document.createElement("span");
+  out.className = "cfgHint"; out.style.marginTop = "0";
+  test.onclick = async () => {
+    test.disabled = true; test.textContent = "连接中…"; out.textContent = "";
+    try {
+      const r = await fetch("/api/polish", {
+        method: "POST", headers: { "content-type": "application/json" },
+        body: JSON.stringify({ text: "连接测试。", instruction: "原样返回这句话" }),
+      });
+      const j = await r.json();
+      out.innerHTML = j.ok
+        ? `<span style="color:var(--success)">✓ 通了</span>，模型回了「${esc(j.suggestion.slice(0, 20))}」`
+        : `<span style="color:var(--danger)">✗ ${esc(j.error)}</span>`;
+    } catch (err) {
+      out.innerHTML = `<span style="color:var(--danger)">✗ ${esc(err.message)}</span>`;
+    } finally {
+      test.disabled = false; test.textContent = "测试连接";
+    }
+  };
+  row.append(test);
+  el.append(row, out);
+
+  const uses = document.createElement("div");
+  uses.className = "cfgHint";
+  uses.innerHTML = `用到模型的地方：<b>选中文字让 AI 润色</b>、<b>从资料生成新页</b>。
+    两者都跑在独立会话、零工具，只提建议，落不落盘由你决定。`;
+  el.append(uses);
+}
+$("cfg").onclick = (e) => { if (e.target.id === "cfg") $("cfg").close(); };
+
+/* ---------------- 从资料生成新页（S-C 最小版） ----------------
+   三步：冻结来源 → 子代理编译草稿 → 逐条核对引文后由用户决定落不落盘。
+   贯穿的不变量：模型产出的每一条都必须能在冻结来源里逐字找到，
+   核不上的**留在界面上标红**，既不悄悄丢掉也不放行。 */
+
+const G = { step: "pick", sources: [], sourceId: null, busy: false, error: null,
+            draft: null, stats: null, meta: null, topic: "", instruction: "", picked: new Set(),
+            mode: "file", segs: [""], pasteTitle: "" };
+
+async function openGen() {
+  G.step = "pick"; G.error = null; G.draft = null; G.sourceId = null;
+  G.topic = ""; G.instruction = ""; G.picked = new Set();
+  G.mode = "file"; G.segs = [""]; G.pasteTitle = "";
+  $("gen").showModal();
+  drawGen();
+  await loadSources();
+}
+
+// 把粘贴进来的几段攒成一份资料。分隔线由服务端加，因此它是冻结内容的一部分
+async function ingestPasted() {
+  const segments = G.segs.map((s) => s.trim()).filter(Boolean);
+  if (!segments.length) { G.error = "还没粘任何内容"; return drawGen(); }
+  G.busy = true; G.error = null; drawGen();
+  try {
+    const r = await fetch("/api/sources", {
+      method: "POST", headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        title: G.pasteTitle.trim() || `粘贴的资料 ${new Date().toLocaleString("zh-CN")}`,
+        segments,
+      }),
+    });
+    const out = await r.json();
+    if (!r.ok) throw new Error(out.error ?? `HTTP ${r.status}`);
+    G.sourceId = out.source.sourceId;
+    G.segs = [""]; G.pasteTitle = "";
+    await loadSources();
+  } catch (err) {
+    G.error = String(err.message ?? err);
+  } finally { G.busy = false; drawGen(); }
+}
+
+async function loadSources() {
+  try {
+    const r = await (await fetch("/api/sources")).json();
+    G.sources = r.sources ?? [];
+  } catch { G.sources = []; }
+  drawGen();
+}
+
+async function ingestFile(file) {
+  const text = await file.text();
+  G.busy = true; G.error = null; drawGen();
+  try {
+    const r = await fetch("/api/sources", {
+      method: "POST", headers: { "content-type": "application/json" },
+      body: JSON.stringify({ filename: file.name, text }),
+    });
+    const out = await r.json();
+    if (!r.ok) throw new Error(out.error ?? `HTTP ${r.status}`);
+    G.sourceId = out.source.sourceId;
+    await loadSources();
+  } catch (err) {
+    G.error = String(err.message ?? err);
+  } finally { G.busy = false; drawGen(); }
+}
+
+async function runCompile() {
+  G.busy = true; G.error = null; G.draft = null; G.step = "review"; drawGen();
+  try {
+    const r = await fetch("/api/compile", {
+      method: "POST", headers: { "content-type": "application/json" },
+      body: JSON.stringify({ sourceId: G.sourceId, topic: G.topic, instruction: G.instruction }),
+    });
+    const out = await r.json();
+    if (!r.ok || !out.ok) throw new Error(out.error ?? `HTTP ${r.status}`);
+    G.draft = out.draft; G.stats = out.stats; G.meta = { ...out.model, ...out.isolation };
+    // 默认只勾选通过校验的条目；核不上的连勾都勾不了
+    G.picked = new Set(out.draft.facts.filter((f) => f.verified).map((f) => f.index));
+  } catch (err) {
+    G.error = String(err.message ?? err);
+  } finally { G.busy = false; drawGen(); }
+}
+
+async function saveGenerated() {
+  const facts = G.draft.facts.filter((f) => f.verified && G.picked.has(f.index))
+    .map((f) => ({ text: f.text, quote: f.quote }));
+  if (!facts.length) { G.error = "至少要留一条通过核对的内容"; return drawGen(); }
+  G.busy = true; G.error = null; drawGen();
+  try {
+    const r = await fetch("/api/page/create", {
+      method: "POST", headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        sourceId: G.sourceId, title: G.draft.title, summary: G.draft.summary,
+        tags: G.draft.tags, links: G.draft.links, facts,
+      }),
+    });
+    const out = await r.json();
+    if (!r.ok || !out.ok) throw new Error(out.error ?? `HTTP ${r.status}`);
+    $("gen").close();
+    S.catalog = await (await fetch("/api/catalog")).json();
+    drawNav(); await loadGraph();
+    await open(out.path);
+  } catch (err) {
+    G.error = String(err.message ?? err);
+  } finally { G.busy = false; drawGen(); }
+}
+
+function drawGen() {
+  const box = $("genBody");
+  setHeader("genHead", G.step === "pick"
+    ? "从资料生成新页 · 第 1 步：选资料"
+    : "从资料生成新页 · 第 2 步：核对每一条");
+  box.innerHTML = "";
+
+  if (G.error) {
+    const e = document.createElement("div");
+    e.className = "pErr"; e.style.marginBottom = ".9rem";
+    e.innerHTML = `<b>没能完成。</b>知识库没有任何改动。`;
+    const c = document.createElement("code"); c.textContent = G.error; e.append(c);
+    box.append(e);
+  }
+
+  if (G.step === "pick") return drawGenPick(box);
+  return drawGenReview(box);
+}
+
+function drawGenPick(box) {
+  // 两种来法：拖文件，或把 AI 的几轮回答粘进来攒成一份
+  const tabs = document.createElement("div");
+  tabs.className = "modeTabs";
+  for (const [id, label] of [["file", "传文件"], ["paste", "粘贴 AI 的回答"]]) {
+    const b = document.createElement("button");
+    b.type = "button";
+    b.className = "modeTab" + (G.mode === id ? " on" : "");
+    b.textContent = label;
+    b.onclick = () => { G.mode = id; G.error = null; drawGen(); };
+    tabs.append(b);
+  }
+  box.append(tabs);
+
+  if (G.mode === "paste") return drawPasteMode(box);
+
+  const drop = document.createElement("div");
+  drop.className = "drop";
+  drop.innerHTML = `把 <b>.md</b> 或 <b>.txt</b> 拖到这里，或点这里选文件<br>
+    <span style="font-size:.78rem;color:var(--text-subtle)">
+      资料摄入后会被<b>冻结</b>：内容算一个 hash 存起来，之后任何改动都能被发现。<br>
+      这是「这条是不是编的」能被回答的前提。</span>`;
+  const file = document.createElement("input");
+  file.type = "file"; file.accept = ".md,.txt,.markdown,text/plain"; file.style.display = "none";
+  file.onchange = () => { if (file.files[0]) ingestFile(file.files[0]); };
+  drop.onclick = () => file.click();
+  drop.ondragover = (e) => { e.preventDefault(); drop.classList.add("over"); };
+  drop.ondragleave = () => drop.classList.remove("over");
+  drop.ondrop = (e) => {
+    e.preventDefault(); drop.classList.remove("over");
+    const f = e.dataTransfer.files[0];
+    if (f) ingestFile(f);
+  };
+  box.append(drop, file);
+  drawSourceList(box);
+  drawTopicAndGo(box);
+}
+
+function drawPasteMode(box) {
+  const hint = document.createElement("div");
+  hint.className = "cfgHint";
+  hint.style.marginTop = "0";
+  hint.innerHTML = `跟 AI 聊出来的东西，一段一段粘进来，攒成一份资料。<br>
+    粘进来的内容会和上传的文件一样被<b>冻结</b>，生成新页时同样逐条核对引文 ——
+    核的是「这句话在你归档的这份材料里有没有」。`;
+  box.append(hint);
+
+  const t = document.createElement("div");
+  t.className = "genField"; t.style.marginTop = ".8rem";
+  t.innerHTML = `<label>给这份资料起个名（可留空）</label>`;
+  const ti = document.createElement("input");
+  ti.value = G.pasteTitle;
+  ti.placeholder = "例：和 AI 讨论中值定理";
+  ti.oninput = () => { G.pasteTitle = ti.value; };
+  t.append(ti);
+  box.append(t);
+
+  G.segs.forEach((seg, i) => {
+    const f = document.createElement("div");
+    f.className = "genField";
+    const head = document.createElement("label");
+    head.style.display = "flex";
+    head.style.alignItems = "center";
+    head.innerHTML = `<span style="flex:1">第 ${i + 1} 段</span>`;
+    if (G.segs.length > 1) {
+      const del = document.createElement("button");
+      del.type = "button"; del.className = "segDel"; del.textContent = "移除";
+      del.onclick = () => { G.segs.splice(i, 1); drawGen(); };
+      head.append(del);
+    }
+    f.append(head);
+    const ta = document.createElement("textarea");
+    ta.rows = 5;
+    ta.value = seg;
+    ta.placeholder = i === 0 ? "把 AI 的回答粘到这里…" : "";
+    ta.oninput = () => { G.segs[i] = ta.value; };
+    f.append(ta);
+    box.append(f);
+  });
+
+  const row = document.createElement("div");
+  row.className = "cfgRow";
+  const more = document.createElement("button");
+  more.className = "ghost"; more.type = "button"; more.textContent = "＋ 再加一段";
+  more.style.fontSize = ".8rem";
+  more.onclick = () => { G.segs.push(""); drawGen(); };
+  const freeze = document.createElement("button");
+  freeze.className = "save"; freeze.type = "button";
+  freeze.textContent = G.busy ? "冻结中…" : "冻结成一份资料";
+  freeze.disabled = G.busy;
+  freeze.onclick = ingestPasted;
+  row.append(more, freeze);
+  box.append(row);
+
+  drawSourceList(box);
+  drawTopicAndGo(box);
+}
+
+// 已冻结的资料清单，两种模式下都显示——刚粘完的那份会自动选中
+function drawSourceList(box) {
+  if (!G.sources.length) return;
+  const label = document.createElement("div");
+  label.className = "sublabel";
+  label.style.margin = "1rem 0 .3rem";
+  label.textContent = "已冻结的资料";
+  box.append(label);
+
+  const list = document.createElement("div");
+  list.className = "srcList";
+  for (const s of G.sources) {
+    const b = document.createElement("button");
+    b.className = "srcItem" + (G.sourceId === s.sourceId ? " on" : "");
+    b.type = "button";
+    b.innerHTML = `<span class="grow">${esc(s.title)}</span>
+      ${s.segments > 1 ? `<small>${s.segments} 段</small>` : ""}
+      <small>${s.chars} 字</small>
+      <span class="frozen${s.intact ? "" : " bad"}">${s.intact ? "已冻结" : "已被改动"}</span>`;
+    b.onclick = () => { G.sourceId = s.sourceId; drawGen(); };
+    list.append(b);
+  }
+  box.append(list);
+}
+
+function drawTopicAndGo(box) {
+  const t = document.createElement("div");
+  t.className = "genField"; t.style.marginTop = "1rem";
+  t.innerHTML = `<label>这一页讲什么？（留空就让 AI 自己挑）</label>`;
+  const ti = document.createElement("input");
+  ti.value = G.topic; ti.placeholder = "例：微分中值定理";
+  ti.oninput = () => { G.topic = ti.value; };
+  t.append(ti);
+  box.append(t);
+
+  const bar = document.createElement("div");
+  bar.className = "pBar";
+  const go = document.createElement("button");
+  go.className = "save"; go.type = "button";
+  go.textContent = G.busy ? "处理中…" : "让子代理整理成一页";
+  go.disabled = !G.sourceId || G.busy;
+  go.onclick = runCompile;
+  const cancel = document.createElement("button");
+  cancel.className = "ghost"; cancel.type = "button"; cancel.textContent = "关闭";
+  cancel.onclick = () => $("gen").close();
+  bar.append(go, cancel);
+  box.append(bar);
+}
+
+function drawGenReview(box) {
+  if (G.busy && !G.draft) {
+    const s = document.createElement("div");
+    s.className = "pState"; s.style.minHeight = "12rem";
+    s.innerHTML = `<span class="spin"></span>子代理正在读资料、整理页面…`;
+    box.append(s);
+    return;
+  }
+  if (!G.draft) {
+    const back = document.createElement("button");
+    back.className = "ghost"; back.type = "button"; back.textContent = "← 回上一步";
+    back.onclick = () => { G.step = "pick"; drawGen(); };
+    box.append(back);
+    return;
+  }
+
+  // 核对结果摆在最前面：先说清楚哪些能信，再谈内容
+  const tally = document.createElement("div");
+  tally.className = "tally";
+  tally.innerHTML = `<span><span class="n good">${G.stats.verified}</span> 条核对通过</span>
+    <span><span class="n bad">${G.stats.blocked}</span> 条核不上，已拦下</span>
+    <span style="color:var(--text-subtle);font-size:.78rem">
+      每条都拿它的引文去冻结来源里逐字比对过</span>`;
+  box.append(tally);
+
+  for (const [label, key] of [["标题", "title"], ["一句话说明", "summary"]]) {
+    const f = document.createElement("div");
+    f.className = "genField";
+    f.innerHTML = `<label>${label}</label>`;
+    const el = document.createElement(key === "summary" ? "textarea" : "input");
+    if (key === "summary") el.rows = 2;
+    el.value = G.draft[key];
+    el.oninput = () => { G.draft[key] = el.value; };
+    f.append(el);
+    box.append(f);
+  }
+
+  const lab = document.createElement("div");
+  lab.className = "genField";
+  lab.innerHTML = `<label>要点（勾掉不想要的；核不上的不能勾）</label>`;
+  box.append(lab);
+
+  for (const f of G.draft.facts) {
+    const el = document.createElement("div");
+    el.className = "fact " + (f.verified ? "okv" : "bad");
+    const top = document.createElement("div");
+    top.className = "ftop";
+    const cb = document.createElement("input");
+    cb.type = "checkbox";
+    cb.checked = f.verified && G.picked.has(f.index);
+    cb.disabled = !f.verified;                       // 核不上的，勾都勾不了
+    cb.onchange = () => { cb.checked ? G.picked.add(f.index) : G.picked.delete(f.index); drawGen(); };
+    const txt = document.createElement("div");
+    txt.className = "ftext"; txt.textContent = f.text;
+    const badge = document.createElement("span");
+    badge.className = "badge";
+    badge.textContent = f.verified ? "✓ 出处已核对" : "✗ 核不上";
+    top.append(cb, txt, badge);
+    el.append(top);
+
+    if (f.quote) {
+      const q = document.createElement("blockquote");
+      q.textContent = f.quote;
+      el.append(q);
+    }
+    if (!f.verified) {
+      const why = document.createElement("div");
+      why.className = "why";
+      why.textContent = f.problem?.message ?? "核对失败";
+      el.append(why);
+    }
+    box.append(el);
+  }
+
+  const tags = document.createElement("div");
+  tags.className = "genField";
+  tags.innerHTML = `<label>标签</label>`;
+  const ti = document.createElement("input");
+  ti.value = G.draft.tags.join(", ");
+  ti.oninput = () => { G.draft.tags = ti.value.split(",").map((s) => s.trim()).filter(Boolean); };
+  tags.append(ti);
+  box.append(tags);
+
+  const bar = document.createElement("div");
+  bar.className = "pBar";
+  const save = document.createElement("button");
+  save.className = "save"; save.type = "button";
+  const n = G.draft.facts.filter((f) => f.verified && G.picked.has(f.index)).length;
+  save.textContent = G.busy ? "写入中…" : `建这一页（${n} 条）`;
+  save.disabled = G.busy || n === 0;
+  save.onclick = saveGenerated;
+  const again = document.createElement("button");
+  again.className = "ghost"; again.type = "button"; again.textContent = "重新整理";
+  again.disabled = G.busy;
+  again.onclick = runCompile;
+  const back = document.createElement("button");
+  back.className = "ghost"; back.type = "button"; back.textContent = "放弃";
+  back.onclick = () => $("gen").close();
+  const grow = document.createElement("span"); grow.className = "grow";
+  const meta = document.createElement("span");
+  meta.className = "pMeta";
+  if (G.meta) meta.textContent = `${G.meta.modelId} · 工具 ${G.meta.tools} · 独立会话`;
+  bar.append(save, again, back, grow, meta);
+  box.append(bar);
+
+  const note = document.createElement("div");
+  note.className = "pNote";
+  note.innerHTML = `按「建这一页」之前，知识库里什么都没变。<br>
+    核不上的条目<b>不会</b>被写进去，也<b>没有</b>被悄悄删掉 —— 它们留在上面，
+    好让你看见模型说了什么、以及为什么不能信。<br>
+    写盘那一刻服务端会<b>再核对一遍</b>，界面上的勾选骗不过它。`;
+  box.append(note);
+}
+
+$("gen").onclick = (e) => { if (e.target.id === "gen") $("gen").close(); };
+
+/* ---------------- 润色子代理（S-B / ADR-V2-022） ----------------
+   贯穿全流程的一条不变量：在用户点「采用」之前，正文一个字都不动。
+   子代理跑在独立会话里，工具数为 0，改不了任何文件——它只能提建议。 */
+
+// 选中的位置要在唤起时就记下来：焦点一旦移进弹窗，textarea 的 selection 就没了
+function polishSelection() {
+  const ta = document.querySelector(".editor");
+  if (!ta) return null;
+  const { selectionStart: a, selectionEnd: b } = ta;
+  if (a === b) return null;
+  return { ta, start: a, end: b, text: ta.value.slice(a, b) };
+}
+
+// 唤起按钮就贴在编辑框正下方的提示条里，跟着选区变状态。
+// 早先试过把它浮在选区上方（镜像元素量坐标），但那套定位在这里没法可靠验证，
+// 而这个位置由布局保证永远正确，也不会挡住正在读的字。
+function updatePolishFab() {
+  const btn = $("polishFab");
+  if (!btn) return;
+  const sel = polishSelection();
+  const n = sel?.text.trim() ? sel.text.length : 0;
+  btn.disabled = n === 0 || P.busy;
+  btn.dataset.n = String(n);
+  btn.querySelector(".lbl").textContent = n ? `让 AI 润色选中的 ${n} 字` : "选中一段文字，让 AI 润色";
+}
+
+const P = { sel: null, suggestion: null, busy: false, error: null, meta: null, instruction: "" };
+
+function openPolish(sel) {
+  P.sel = sel; P.suggestion = null; P.error = null; P.meta = null; P.instruction = "";
+  $("polish").showModal();
+  runPolish();
+}
+
+async function runPolish() {
+  P.busy = true; P.error = null; drawPolish();
+  try {
+    const r = await fetch("/api/polish", {
+      method: "POST", headers: { "content-type": "application/json" },
+      body: JSON.stringify({ text: P.sel.text, instruction: P.instruction }),
+    });
+    const out = await r.json();
+    if (!r.ok || !out.ok) {
+      P.error = { reason: out.reason ?? "unavailable", message: out.error ?? `HTTP ${r.status}` };
+    } else {
+      P.suggestion = out.suggestion;
+      P.meta = { ...out.model, ...out.isolation };
+    }
+  } catch (err) {
+    P.error = { reason: "unavailable", message: String(err.message ?? err) };
+  } finally {
+    P.busy = false; drawPolish();
+  }
+}
+
+function drawPolish() {
+  setHeader("polishHead", "让 AI 润色这一段 · 子代理独立会话");
+  const box = $("polishBody");
+  box.innerHTML = "";
+
+  const row = document.createElement("div");
+  row.className = "pRow";
+
+  const orig = document.createElement("div");
+  orig.className = "pBox";
+  orig.innerHTML = `<div class="cap"><span>你选中的原文</span><span>${P.sel.text.length} 字</span></div>`;
+  const opre = document.createElement("pre");
+  opre.textContent = P.sel.text;
+  orig.append(opre);
+
+  const sug = document.createElement("div");
+  sug.className = "pBox sug";
+  sug.innerHTML = `<div class="cap"><span>AI 的建议</span><span>${
+    P.suggestion ? P.suggestion.length + " 字" : "—"
+  }</span></div>`;
+  if (P.busy) {
+    const s = document.createElement("div");
+    s.className = "pState";
+    s.innerHTML = `<span class="spin"></span>子代理正在改写…`;
+    sug.append(s);
+  } else if (P.suggestion) {
+    const spre = document.createElement("pre");
+    spre.textContent = P.suggestion;
+    sug.append(spre);
+  } else {
+    const s = document.createElement("div");
+    s.className = "pState";
+    s.textContent = P.error ? "这次没拿到建议" : "—";
+    sug.append(s);
+  }
+  row.append(orig, sug);
+  box.append(row);
+
+  // 如实报错：没配模型就说没配模型，不假装有结果（红线 3 / 5）
+  if (P.error) {
+    const e = document.createElement("div");
+    e.className = "pErr";
+    e.style.marginTop = ".9rem";
+    e.innerHTML = P.error.reason === "unconfigured"
+      ? `<b>润色还没接上模型。</b>这是配置问题，不是你的操作有误 —— 正文没有任何改动。`
+      : `<b>这次调用没成功。</b>正文没有任何改动，可以再试一次。`;
+    const code = document.createElement("code");
+    code.textContent = P.error.message;
+    e.append(code);
+    box.append(e);
+  }
+
+  // 「改提示词 → 下一版」：目标 ③ 的交互形态
+  const ask = document.createElement("div");
+  ask.className = "pAsk";
+  ask.innerHTML = `<label>想让它怎么改？（留空就是「更通顺、更好读」）</label>`;
+  const rowIn = document.createElement("div");
+  rowIn.className = "row";
+  const input = document.createElement("input");
+  input.value = P.instruction;
+  input.placeholder = "例：再简短一点 / 换成给学生看的说法 / 保留公式不动";
+  input.oninput = () => { P.instruction = input.value; };
+  input.onkeydown = (e) => { if (e.key === "Enter" && !P.busy) { e.preventDefault(); runPolish(); } };
+  const again = document.createElement("button");
+  again.className = "ghost"; again.type = "button";
+  again.textContent = P.suggestion || P.error ? "再来一版" : "重试";
+  again.disabled = P.busy;
+  again.onclick = () => runPolish();
+  rowIn.append(input, again);
+  ask.append(rowIn);
+  box.append(ask);
+
+  const bar = document.createElement("div");
+  bar.className = "pBar";
+  const take = document.createElement("button");
+  take.className = "save"; take.type = "button"; take.textContent = "采用，替换选中的原文";
+  take.disabled = !P.suggestion || P.busy;
+  take.onclick = acceptPolish;
+  const drop = document.createElement("button");
+  drop.className = "ghost"; drop.type = "button"; drop.textContent = "放弃";
+  drop.onclick = () => $("polish").close();          // 正文原样不动
+  const grow = document.createElement("span");
+  grow.className = "grow";
+  const meta = document.createElement("span");
+  meta.className = "pMeta";
+  if (P.meta) meta.textContent = `${P.meta.modelId} · 工具 ${P.meta.tools} · 一次性会话 · 不进主对话`;
+  bar.append(take, drop, grow, meta);
+  box.append(bar);
+
+  const note = document.createElement("div");
+  note.className = "pNote";
+  note.innerHTML = `采用之前，正文一个字都不会变。<br>
+    子代理跑在<b>独立会话</b>里、<b>没有任何工具</b>，它写不了文件，只能提建议 ——
+    要不要用由你决定。<br>
+    采用后这段算<b>你自己的内容</b>（AI 改写，未经来源校验），不是从资料里核对过的原话。`;
+  box.append(note);
+}
+
+function acceptPolish() {
+  const { ta, start, end } = P.sel;
+  // 以状态里的 body 为准做替换：弹窗打开期间 textarea 可能已被重绘
+  const before = S.body.slice(0, start), after = S.body.slice(end);
+  S.body = before + P.suggestion + after;
+  S.dirty = true;
+  $("polish").close();
+  drawDoc(); drawSide();
+  // 替换完把光标落在新文字末尾，方便接着改
+  const fresh = document.querySelector(".editor");
+  if (fresh) {
+    const pos = start + P.suggestion.length;
+    fresh.focus();
+    fresh.setSelectionRange(pos, pos);
+  }
+}
+
+$("polish").onclick = (e) => { if (e.target.id === "polish") $("polish").close(); };
+$("polish").addEventListener("close", () => setTimeout(updatePolishFab, 0));
+
+// ⌘K / Ctrl+K 唤起润色
+window.addEventListener("keydown", (e) => {
+  if (!(e.key === "k" || e.key === "K") || !(e.metaKey || e.ctrlKey)) return;
+  const sel = polishSelection();
+  if (!sel?.text.trim()) return;
+  e.preventDefault();
+  openPolish(sel);
+});
+
+/* ---------------- 教程：三样写法 + 复杂写法交给 AI ---------------- */
+// 「效果」一栏用本站自己的 renderMd 现场渲染，教程因此不可能和真实行为脱节
+const GUIDE = [
+  {
+    mark: "#",
+    name: "标题",
+    note: "几个 # 就是第几级，一到五级。一级标题就是页面标题，已经显示在页头，正文里不用再写一遍。",
+    src: "## 一元微分学\n\n### 微分中值定理\n\n#### 拉格朗日中值定理",
+  },
+  {
+    mark: "1.",
+    name: "序号",
+    note: "按顺序讲的步骤用它。行首按 Tab 缩进一层，就成了子条目。",
+    src: "1. 先验证连续性\n2. 再验证可导性\n\t1. 检查开区间\n\t2. 检查端点\n3. 最后套定理",
+  },
+  {
+    mark: "-",
+    name: "要点",
+    note: "不分先后的并列条目用它。同样可以用 Tab 缩进。",
+    src: "- 罗尔定理\n- 拉格朗日中值定理\n\t- 几何意义：存在平行于割线的切线\n- 柯西中值定理",
+  },
+  {
+    mark: "[[ ]]",
+    name: "链到别的页",
+    note: "写上别的页面名，就自动连起来了，右边的关系图里也会多一条线。写了但还不存在的页，会如实显示成橙色的空节点，不会被悄悄丢掉。",
+    src: "它是 [[罗尔定理]] 的推广，也是 [[柯西中值定理]] 的特例。",
+  },
+];
+
+function openTutor() {
+  dismissPeek();
+  localStorage.setItem("tutorSeen", "1");
+  const box = $("tutorBody");
+  box.innerHTML = `<p class="lede">正文用 Markdown 写。日常只要下面几样就够了 —— 左边是你敲的字，右边是保存后的样子。</p>`;
+
+  for (const g of GUIDE) {
+    const rule = document.createElement("div");
+    rule.className = "rule";
+    rule.innerHTML = `<h5><code>${esc(g.mark)}</code>${esc(g.name)}</h5><p>${esc(g.note)}</p>`;
+    const demo = document.createElement("div");
+    demo.className = "demo";
+    const left = document.createElement("div");
+    left.innerHTML = `<div class="cap">你写</div>`;
+    const pre = document.createElement("pre");
+    pre.textContent = g.src;                      // 原样显示，Tab 就是 Tab
+    left.append(pre);
+    const right = document.createElement("div");
+    right.innerHTML = `<div class="cap">显示成</div>`;
+    const out = document.createElement("div");
+    out.className = "out md";
+    out.innerHTML = renderMd(g.src);
+    right.append(out);
+    demo.append(left, right);
+    rule.append(demo);
+    box.append(rule);
+  }
+
+  const ai = document.createElement("div");
+  ai.className = "aiNote";
+  ai.innerHTML = `<strong>表格、公式、代码块这些复杂写法，交给 AI。</strong>
+    <p>不用自己去记语法：直接跟 AI 说「帮我把这几组数据排成表格」，
+       把它给的内容粘进正文即可 —— 复杂写法交给 AI，你只管把意思说清楚。</p>`;
+  box.append(ai);
+
+  $("tutor").showModal();
+}
+$("tutorBtn").onclick = openTutor;
+$("tutor").onclick = (e) => { if (e.target.id === "tutor") $("tutor").close(); };
+
+function dismissPeek() {
+  $("peek")?.remove();
+  localStorage.setItem("tutorSeen", "1");
+}
+
+// 首次使用：非模态气泡，指向常驻的「教程」按钮
+function maybePeek() {
+  if (localStorage.getItem("tutorSeen")) return;
+  const tip = document.createElement("div");
+  tip.className = "peek";
+  tip.id = "peek";
+  tip.innerHTML = `<button class="x" type="button" title="不再提示">×</button>
+    第一次来？正文只要 <b>#</b> 标题、<b>1.</b> 序号、<b>-</b> 要点三样就够写了，
+    复杂的交给 AI。点下面的<b>教程</b>看两分钟。`;
+  tip.querySelector(".x").onclick = dismissPeek;
+  document.body.append(tip);
+}
+
+/* ---------------- 关系图：力导向 + 平移缩放 + 拖动节点 ---------------- */
+function graphPanel() {
+  const wrap = document.createElement("div");
+  wrap.className = "graph";
+  wrap.innerHTML = `<h4><span>关系图</span><span class="tools">
+      <button type="button" id="gIn" title="放大">+</button>
+      <button type="button" id="gOut" title="缩小">−</button>
+      <button type="button" id="gFit" title="回到中心">◎</button>
+    </span></h4><canvas id="gcanvas"></canvas>`;
+  setTimeout(() => { bindGraph(); drawGraph(); }, 0);
+  return wrap;
+}
+
+async function loadGraph() {
+  const data = await (await fetch("/api/graph")).json();
+  const prev = new Map((S.graph?.nodes ?? []).map((n) => [n.id, n]));
+  const nodes = data.nodes.map((n, i) => {
+    const old = prev.get(n.id);
+    const a = (i / data.nodes.length) * Math.PI * 2;
+    return { ...n, x: old?.x ?? Math.cos(a) * 90, y: old?.y ?? Math.sin(a) * 90, vx: 0, vy: 0 };
+  });
+  const byId = new Map(nodes.map((n) => [n.id, n]));
+  const edges = data.edges
+    .map((e) => ({ a: byId.get(e.a), b: byId.get(e.b), type: e.type }))
+    .filter((e) => e.a && e.b);
+  S.graph = { nodes, edges, tx: 0, ty: 0, k: 1, missing: data.missing ?? [] };
+  for (let i = 0; i < 320; i++) tick();
+  drawGraph();
+}
+
+function tick() {
+  const g = S.graph; if (!g) return;
+  const { nodes, edges } = g;
+  for (const n of nodes) { n.vx *= 0.82; n.vy *= 0.82; }
+  for (let i = 0; i < nodes.length; i++) {
+    for (let j = i + 1; j < nodes.length; j++) {
+      const a = nodes[i], b = nodes[j];
+      let dx = b.x - a.x, dy = b.y - a.y;
+      let d2 = dx * dx + dy * dy || 0.01;
+      if (d2 > 90000) continue;
+      const f = 1600 / d2;
+      const d = Math.sqrt(d2);
+      const ux = dx / d, uy = dy / d;
+      a.vx -= ux * f; a.vy -= uy * f; b.vx += ux * f; b.vy += uy * f;
+    }
+  }
+  for (const e of edges) {
+    const dx = e.b.x - e.a.x, dy = e.b.y - e.a.y;
+    const d = Math.hypot(dx, dy) || 0.01;
+    // 标签是枢纽节点，弹簧必须比链接弱、静止长度更长，
+    // 否则「concept」这类全库通用标签会把整张图拉成一坨
+    const tagEdge = e.type === "tag";
+    const f = (d - (tagEdge ? 105 : 58)) * (tagEdge ? 0.0035 : 0.016);
+    const ux = dx / d, uy = dy / d;
+    e.a.vx += ux * f; e.a.vy += uy * f; e.b.vx -= ux * f; e.b.vy -= uy * f;
+  }
+  for (const n of nodes) {
+    if (n.fixed) { n.vx = n.vy = 0; continue; }
+    n.vx -= n.x * 0.004; n.vy -= n.y * 0.004;
+    n.x += n.vx; n.y += n.vy;
+  }
+}
+
+function css(name) { return getComputedStyle(document.documentElement).getPropertyValue(name).trim(); }
+
+function drawGraph() {
+  const c = $("gcanvas"); const g = S.graph;
+  if (!c || !g) return;
+  const dpr = window.devicePixelRatio || 1;
+  const w = c.clientWidth, h = c.clientHeight;
+  c.width = w * dpr; c.height = h * dpr;
+  const ctx = c.getContext("2d");
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  ctx.clearRect(0, 0, w, h);
+  ctx.save();
+  ctx.translate(w / 2 + g.tx, h / 2 + g.ty);
+  ctx.scale(g.k, g.k);
+
+  const accent = css("--accent"), border = css("--border-strong"), subtle = css("--text-subtle"),
+        surface = css("--surface"), muted = css("--text-muted"), warn = css("--warning");
+  const cur = S.page?.path;
+
+  // 标签边比链接边淡：标签是「共享属性」，不是作者写下的关联
+  for (const e of g.edges) {
+    ctx.beginPath();
+    ctx.lineWidth = (e.type === "tag" ? 0.6 : 1.1) / g.k;
+    ctx.strokeStyle = e.type === "tag" ? css("--border") : border;
+    if (e.type === "tag") ctx.setLineDash([2 / g.k, 3 / g.k]); else ctx.setLineDash([]);
+    ctx.moveTo(e.a.x, e.a.y); ctx.lineTo(e.b.x, e.b.y); ctx.stroke();
+  }
+  ctx.setLineDash([]);
+
+  ctx.font = `${11 / g.k}px var(--sans)`;
+  ctx.textAlign = "center";
+  for (const n of g.nodes) {
+    const on = n.id === cur;
+    const linked = g.edges.some((e) => (e.a === n && e.b.id === cur) || (e.b === n && e.a.id === cur));
+    const isTag = n.type === "tag", isMissing = n.type === "missing";
+    const r = on ? 7 : isTag ? 3 : linked ? 5 : 3.6;
+
+    ctx.beginPath(); ctx.arc(n.x, n.y, r, 0, Math.PI * 2);
+    if (isMissing) {
+      ctx.fillStyle = surface; ctx.fill();
+      ctx.strokeStyle = warn; ctx.lineWidth = 1.2 / g.k; ctx.setLineDash([2 / g.k, 2 / g.k]);
+      ctx.stroke(); ctx.setLineDash([]);
+    } else if (isTag) {
+      ctx.fillStyle = surface; ctx.fill();
+      ctx.strokeStyle = linked ? accent : subtle; ctx.lineWidth = 1.2 / g.k; ctx.stroke();
+    } else {
+      ctx.fillStyle = on || linked ? accent : subtle; ctx.fill();
+      if (on) { ctx.strokeStyle = surface; ctx.lineWidth = 2 / g.k; ctx.stroke(); }
+    }
+
+    if (on || linked || isMissing || g.k > 1.35) {
+      ctx.fillStyle = on ? accent : isMissing ? warn : isTag ? subtle : muted;
+      ctx.fillText(n.title, n.x, n.y - r - 4 / g.k);
+    }
+  }
+  ctx.restore();
+}
+
+function bindGraph() {
+  const c = $("gcanvas"); if (!c || c.dataset.bound) return;
+  c.dataset.bound = "1";
+  let mode = null, last = null, node = null, moved = 0;
+
+  const at = (ev) => {
+    const r = c.getBoundingClientRect(); const g = S.graph;
+    return { x: (ev.clientX - r.left - r.width / 2 - g.tx) / g.k, y: (ev.clientY - r.top - r.height / 2 - g.ty) / g.k };
+  };
+  const hit = (p) => S.graph.nodes.find((n) => Math.hypot(n.x - p.x, n.y - p.y) < 9 / S.graph.k);
+
+  c.onpointerdown = (ev) => {
+    if (!S.graph) return;
+    c.setPointerCapture(ev.pointerId); c.classList.add("drag");
+    moved = 0; last = { x: ev.clientX, y: ev.clientY };
+    node = hit(at(ev));
+    mode = node ? "node" : "pan";
+    if (node) node.fixed = true;
+  };
+  c.onpointermove = (ev) => {
+    if (!mode) return;
+    const dx = ev.clientX - last.x, dy = ev.clientY - last.y;
+    moved += Math.abs(dx) + Math.abs(dy);
+    last = { x: ev.clientX, y: ev.clientY };
+    if (mode === "pan") { S.graph.tx += dx; S.graph.ty += dy; }
+    else { const p = at(ev); node.x = p.x; node.y = p.y; for (let i = 0; i < 3; i++) tick(); }
+    drawGraph();
+  };
+  c.onpointerup = (ev) => {
+    c.classList.remove("drag");
+    if (mode === "node" && node) {
+      node.fixed = false;
+      // 只有真实页面能打开；标签节点和幻影节点没有对应文件
+      if (moved < 4 && node.type !== "tag" && node.type !== "missing") open(node.id);
+    }
+    mode = null; node = null;
+  };
+  c.onwheel = (ev) => {
+    ev.preventDefault();
+    S.graph.k = Math.min(3, Math.max(0.4, S.graph.k * (ev.deltaY < 0 ? 1.12 : 0.89)));
+    drawGraph();
+  };
+  $("gIn").onclick = () => { S.graph.k = Math.min(3, S.graph.k * 1.25); drawGraph(); };
+  $("gOut").onclick = () => { S.graph.k = Math.max(0.4, S.graph.k / 1.25); drawGraph(); };
+  $("gFit").onclick = () => { S.graph.tx = S.graph.ty = 0; S.graph.k = 1; drawGraph(); };
+}
+
+window.addEventListener("resize", drawGraph);
+boot();
+</script>
+</body>
+</html>
