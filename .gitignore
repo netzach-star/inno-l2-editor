@@ -7,8 +7,6 @@ model.config.json
 # 隔离会话的 agentDir，运行时生成
 .polish-agent/
 
-# 冻结来源为运行时数据
-data/sources/
+# 运行时与本地数据一概不进仓库（仓库自带 sample/wiki）
+data/
 
-# 本地沙盒数据（含教材衍生内容，不进仓库；仓库自带 sample/wiki）
-data/wiki/
