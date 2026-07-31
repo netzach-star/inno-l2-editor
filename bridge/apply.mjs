@@ -103,6 +103,13 @@ const EDITS = [
  * 只出现在已经落定的整段回答下方：流式过程中的文本走的是另一条渲染路径，
  * 不经过 MessageBubble，所以天然满足「每段完整回答」。
  */
+function findQuestionFor(messages: ChatMessage[], index: number): string {
+	for (let i = index - 1; i >= 0; i--) {
+		if (messages[i]!.role === "user") return messages[i]!.content;
+	}
+	return "";
+}
+
 function StageButton({ question, answer }: { question: string; answer: string }) {
 	const { t } = useTranslation();
 	const staged = useStoreSnapshot(stagingStore, () => stagingStore.has(answer));
@@ -129,9 +136,11 @@ function MessageBubble({ message, question, showChannel }: { message: ChatMessag
 	[paths.chatCenter,
 		`\t\t\t\t<AssistantContent content={message.content} />\n\t\t\t\t{message.error ? (\n\t\t\t\t\t<div className={message.content.trim() ? "mt-2" : ""}>\n\t\t\t\t\t\t<ErrorBlock error={message.error} />\n\t\t\t\t\t</div>\n\t\t\t\t) : null}`,
 		`\t\t\t\t<AssistantContent content={message.content} />\n\t\t\t\t{message.error ? (\n\t\t\t\t\t<div className={message.content.trim() ? "mt-2" : ""}>\n\t\t\t\t\t\t<ErrorBlock error={message.error} />\n\t\t\t\t\t</div>\n\t\t\t\t) : null}\n\t\t\t\t{!message.error ? <StageButton question={question ?? ""} answer={message.content} /> : null}`],
+	// 只锚一行 MessageBubble 调用，不碰外面的 map 结构。
+	// 上游在这一带加过 data-conversation-turn 的包裹层，锚大了必然被牵连。
 	[paths.chatCenter,
-		`\t\t\t\t\t\treturn chat.messages.map((message, index) => (\n\t\t\t\t\t\t\t<MessageBubble key={\`\${message.timestamp}-\${index}\`} message={message} showChannel={multiChannel} />\n\t\t\t\t\t\t));`,
-		`\t\t\t\t\t\treturn chat.messages.map((message, index) => {\n\t\t\t\t\t\t\t// 往回找最近的一条用户消息，作为这段回答对应的提问\n\t\t\t\t\t\t\tlet question = "";\n\t\t\t\t\t\t\tfor (let i = index - 1; i >= 0; i--) {\n\t\t\t\t\t\t\t\tif (chat.messages[i]!.role === "user") { question = chat.messages[i]!.content; break; }\n\t\t\t\t\t\t\t}\n\t\t\t\t\t\t\treturn (\n\t\t\t\t\t\t\t\t<MessageBubble key={\`\${message.timestamp}-\${index}\`} message={message} question={question} showChannel={multiChannel} />\n\t\t\t\t\t\t\t);\n\t\t\t\t\t\t});`],
+		`<MessageBubble message={message} showChannel={multiChannel} />`,
+		`<MessageBubble message={message} question={findQuestionFor(chat.messages, index)} showChannel={multiChannel} />`],
 ];
 
 const I18N = {
