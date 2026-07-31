@@ -110,9 +110,47 @@ cp model.config.example.json model.config.json   # 已 gitignore
 # 填进 apiKey，然后 node server.mjs
 ```
 
+## 装上「对话寄存区」（可选，但很值）
+
+不装的话，把对话变成 wiki 页只能手动复制粘贴。装上之后：InnoSpark 每段 AI 回答下方多一个
+**「加入寄存区」**，右侧面板多一个 **「寄存区」** 标签；攒够了点 **「开始总结」**，
+自动打开本编辑器并开始生成。
+
+```bash
+./bridge/install.sh /path/to/inno-agent
+```
+
+一条命令搞定：改代码、补翻译、重新构建。然后重启 InnoSpark：
+
+```bash
+cd /path/to/inno-agent && ./restart-dev.sh restart --mode prod
+```
+
+不想要了：
+
+```bash
+./bridge/install.sh /path/to/inno-agent --uninstall
+```
+
+**关于这个脚本**
+
+- **幂等**：装过了会跳过，不会重复改。
+- **可逆**：卸载后 `git status` 是干净的 —— 改动逐字节还原，实测过。
+- **不硬来**：所有改动先在内存里算完，任何一个锚点对不上就中止，**一个字节都不写**。
+  上游改了某处，它会明确告诉你是哪个文件、哪段锚点，而不是甩一句 patch 失败。
+- **改了什么**：新增 2 个文件（`staging-store.ts` / `StagingArea.tsx`），
+  改动 5 个（`app-store.ts`、`WorkspacePanel.tsx`、`ChatCenter.tsx`、两个语言包）。
+  改动量刻意压到最小 —— InnoSpark 侧只负责「攒」和「交」，编译、引文核对、落盘全在这边。
+
 ---
 
 ## 怎么用
+
+### 从对话攒素材（装了寄存区之后）
+
+聊到有价值的内容，在那段回答下方点「加入寄存区」—— 该回答连同**对应的提问**一起被存下，
+以提问前 20 字为题。攒够了在寄存区点「开始总结」，内容会被送到这边冻结，
+并自动跳进下面「从资料生成新页」的核对步骤。
 
 ### 编辑已有页面
 
@@ -173,6 +211,7 @@ node check-pipeline.mjs    # 27 项：写盘边界（需先启动 server.mjs）
 | `citation.mjs` | 引文校验 |
 | `source-store.mjs` | 来源冻结，内容寻址 + hash 对账 |
 | `check-*.mjs` | 核验脚本 |
+| `bridge/` | 对话寄存区：装进 InnoSpark 的安装脚本与源码 |
 | `sample/wiki/` | 三页示例，没接 InnoSpark 时用（内容为自撰常识，不取自任何教材） |
 | `data/sources/` | 冻结来源，运行时生成，不进仓库 |
 

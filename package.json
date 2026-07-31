@@ -1,6 +1,6 @@
 {
   "name": "inno-l2-editor",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "private": true,
   "type": "module",
   "description": "给 InnoSpark L2 Wiki 补一套更好的写入体验：AI 负责整理，用户负责决定。",
