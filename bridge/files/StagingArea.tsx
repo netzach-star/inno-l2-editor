@@ -8,6 +8,19 @@ import { useStoreSnapshot } from "./hooks.js";
  * 对话寄存区。攒「一问一答」，一次性交给 L2 结构化编辑器生成 wiki 页。
  * 编译、引文核对、落盘都在插件那边，这里只负责攒和交。
  */
+/** 列表里那行预览：把 markdown 记号抹掉，否则满屏 ## 和 --- 很难读 */
+function previewOf(answer: string): string {
+	return answer
+		.replace(/```[\s\S]*?```/g, " ")       // 代码块整块去掉
+		.replace(/^\s*[-*_]{3,}\s*$/gm, " ")   // 分隔线
+		.replace(/^#{1,6}\s*/gm, "")           // 标题记号
+		.replace(/\[\[([^\]]+)\]\]/g, "$1")    // 双链只留文字
+		.replace(/[*_`>|]/g, "")               // 行内记号
+		.replace(/\s+/g, " ")
+		.trim()
+		.slice(0, 90);
+}
+
 export function StagingArea() {
 	const { t } = useTranslation();
 	const [showSettings, setShowSettings] = useState(false);
@@ -105,7 +118,7 @@ export function StagingArea() {
 									<div className="min-w-0 flex-1">
 										<div className="truncate text-sm text-[var(--inno-text)]">{pair.title}</div>
 										<div className="mt-0.5 line-clamp-2 text-xs text-[var(--inno-text-muted)]">
-											{pair.answer.replace(/\s+/g, " ").slice(0, 80)}
+											{previewOf(pair.answer)}
 										</div>
 									</div>
 									<button
