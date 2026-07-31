@@ -1,9 +1,9 @@
 {
-  "name": "inno-l2-minimal-prototype",
-  "version": "0.1.0",
+  "name": "inno-l2-editor",
+  "version": "1.0.0",
   "private": true,
   "type": "module",
-  "description": "L2 结构化编辑最小闭环原型。核心零依赖；唯一的依赖只服务于润色子代理（ADR-V2-022），不装也能跑。",
+  "description": "给 InnoSpark L2 Wiki 补一套更好的写入体验：AI 负责整理，用户负责决定。",
   "scripts": {
     "start": "node server.mjs"
   },
@@ -12,5 +12,10 @@
   },
   "engines": {
     "node": ">=22.19.0"
+  },
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/netzach-star/inno-l2-editor.git"
   }
 }
