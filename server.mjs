@@ -13,7 +13,7 @@ import { join, dirname, relative, sep } from "node:path";
 import { existsSync } from "node:fs";
 import { createHash } from "node:crypto";
 import { fileURLToPath } from "node:url";
-import { validateFacts } from "./citation.mjs";
+import { isAnchored, validateFacts } from "./citation.mjs";
 import { ingestSource, listSources, readSource, verifySource } from "./source-store.mjs";
 import { patchFrontmatter, readBodyRaw, readFields, replaceBody } from "./frontmatter.mjs";
 
@@ -902,7 +902,7 @@ const server = createServer(async (req, res) => {
 			}
 		}
 
-		// 编译草稿。模型产出**立刻**逐条过引文校验，对不上的标 blocked 带回来，
+		// 编译草稿。模型产出**立刻**逐条过引文定位，定位不到的标 anchor:none 带回来，
 		// 既不悄悄丢掉、也不放行（红线 2 + 红线 3）
 		if (req.method === "POST" && url.pathname === "/api/compile") {
 			const payload = await readBody(req);
@@ -914,7 +914,7 @@ const server = createServer(async (req, res) => {
 			}
 			const check = await verifySource(SOURCES, payload.sourceId);
 			if (!check.intact) {
-				// 原件被改过，引文校验就失去意义了，直接拒绝编译
+				// 原件被改过，引文定位就失去意义了，直接拒绝编译
 				return json(res, 409, {
 					ok: false,
 					reason: "source_tampered",
@@ -940,8 +940,8 @@ const server = createServer(async (req, res) => {
 					isolation: out.isolation,
 					stats: {
 						total: facts.length,
-						verified: facts.filter((f) => f.verified).length,
-						blocked: facts.filter((f) => !f.verified).length,
+						anchored: facts.filter((f) => isAnchored(f)).length,
+						unanchored: facts.filter((f) => !isAnchored(f)).length,
 					},
 				});
 			} catch (err) {
@@ -981,15 +981,15 @@ const server = createServer(async (req, res) => {
 				});
 			}
 
-			// 服务端重新校验一遍。界面上的勾选状态不可信——
-			// 校验必须在写盘这一侧再做一次，否则红线 2 只是一句界面文案
+			// 服务端重新定位一遍。界面上的勾选状态不可信——
+			// 定位必须在写盘这一侧再做一次，否则红线 2 只是一句界面文案
 			const facts = validateFacts(payload.facts ?? [], source.text);
-			const rejected = facts.filter((f) => !f.verified);
+			const rejected = facts.filter((f) => !isAnchored(f));
 			if (rejected.length > 0) {
 				return json(res, 422, {
 					ok: false,
 					reason: "citation_failed",
-					error: `有 ${rejected.length} 条引文核不上，已拒绝写入`,
+					error: `有 ${rejected.length} 条引文未找到出处，已拒绝写入`,
 					facts: rejected,
 				});
 			}

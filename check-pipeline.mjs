@@ -1,8 +1,17 @@
-// 端到端核验 S-C 的写盘边界。跑法：先 node server.mjs，再 node check-pipeline.mjs
-// 不需要 API key——只测摄入、冻结对账、引文校验、落盘拒绝，都不经过模型。
+// 端到端核验写盘边界。跑法：先 node server.mjs，再 node check-pipeline.mjs
 //
 // 这个文件存在的理由：`/api/compile` 查了冻结、`/api/page/create` 一开始忘了查，
 // 导致改一改 raw.md 就能让编造的句子写进知识库。修完必须有断言钉住。
+//
+// ── v2.0 起它需要一个真在跑的 InnoSpark ──
+// 建页不再由插件自己写盘，而是转发给上游（§4）：
+//   ① POST /api/l2/archive        归档冻结来源（**要调模型**）
+//   ② POST /api/l2/page/concept   写用户批准的正文
+// 而且转成了后台任务，`/api/page/create` 返回 202 + taskId，要轮询 `/api/task`。
+//
+// 所以**被拒绝的那些用例仍然不花钱**（校验在插件侧、写盘之前就拦住了，
+// 根本走不到上游），只有"应当写成功"的那两三条会真的调模型。
+// 拒绝路径才是这个文件的重点，它们不需要 key 也跑得动。
 
 import { readFile, writeFile, rm, stat } from "node:fs/promises";
 import { dirname, join } from "node:path";
@@ -24,6 +33,28 @@ const post = async (path, body) => {
 	return { status: r.status, body: await r.json() };
 };
 const exists = async (p) => { try { await stat(p); return true; } catch { return false; } };
+
+/**
+ * 发起建页并等它跑完。
+ *
+ * v2.0 起建页是后台任务（§4「不能用『保存中…』的模态框把人糊住」），
+ * 所以成功路径返回的是 202 + taskId，要轮询。
+ * 被拒绝的路径（引文定位不过、来源被篡改）仍然是同步的 4xx——
+ * 那些校验在插件侧、写盘之前就做完了，压根走不到上游，也就不花钱。
+ */
+const createAndWait = async (body, timeoutMs = 240_000) => {
+	const started = await post("/api/page/create", body);
+	if (started.status !== 202) return started;   // 同步拒绝，原样返回
+	const id = started.body.taskId;
+	const deadline = Date.now() + timeoutMs;
+	while (Date.now() < deadline) {
+		await new Promise((r) => setTimeout(r, 1000));
+		const t = await (await fetch(`${B}/api/task?id=${encodeURIComponent(id)}`)).json();
+		if (t.state === "done") return { status: 200, body: { ok: true, ...t.result } };
+		if (t.state === "failed") return { status: 502, body: { ok: false, error: t.error, reason: t.reason } };
+	}
+	return { status: 504, body: { ok: false, error: "后台任务超时" } };
+};
 
 const SOURCE_TEXT = [
 	"# 中值定理测试语料",
@@ -53,8 +84,14 @@ try {
 const pagePath = (t) => join(WIKI_DIR, "concepts", `${t}.md`);
 
 // 收尾：把本次测试造出来的东西清掉
+// 收尾走**上游的删除端点**，不要直接 rm ——直接删会把 manifest 与检索索引留脏，
+// 那正是 §4 说的"绕过维护逻辑"。测试自己也得守这条规矩。
 const cleanup = async (...ids) => {
-	for (const t of TITLES) await rm(pagePath(t), { force: true });
+	for (const t of TITLES) {
+		if (!(await exists(pagePath(t)))) continue;
+		await fetch(`${B}/api/page?path=${encodeURIComponent(`wiki/concepts/${t}.md`)}`, { method: "DELETE" })
+			.catch(() => rm(pagePath(t), { force: true }));
+	}
 	for (const id of ids) {
 		if (id) await rm(join(SOURCES_DIR, id), { recursive: true, force: true });
 	}
@@ -94,7 +131,7 @@ try {
 	});
 	ok("同样几段重复摄入幂等", multiSame.body.source?.sourceId === multiId);
 
-	const inSeg = await post("/api/page/create", {
+	const inSeg = await createAndWait({
 		sourceId: multiId, title: TITLES[4], summary: "x", tags: [], links: [],
 		facts: [{ text: "拉格朗日是罗尔的推广", quote: "第二段：拉格朗日是罗尔的推广。" }],
 	});
@@ -160,23 +197,46 @@ try {
 			.sources.find((s) => s.sourceId === sourceId)?.intact === true);
 
 	console.log("\n四、合法内容能正常落盘");
-	const good = await post("/api/page/create", {
+	const good = await createAndWait({
 		sourceId, title: TITLES[0], summary: "一句话说明。", tags: ["测试"], links: [],
 		facts: [{ text: "拉格朗日中值定理是罗尔定理的推广", quote: "拉格朗日中值定理是罗尔定理的推广" }],
 	});
 	ok("照抄原文的内容写入成功", good.status === 200 && good.body.ok === true);
 	ok("页面确实出现在磁盘上", await exists(pagePath(TITLES[0])));
 	const written = await readFile(pagePath(TITLES[0]), "utf8");
-	ok("frontmatter 带上了 source_ids", written.includes(`- ${sourceId}`));
+	// v2.0：页面 frontmatter 里的 source_ids 是**上游**的 l2src_，不是插件的 src_。
+	// 两个 ID 空间的映射存在插件侧的 meta.json 里，不往上游数据结构里塞字段（§4）。
+	ok("frontmatter 的 source_ids 是上游的 l2src_", /source_ids:\s*\n\s*- l2src_/.test(written));
+	{
+		const meta = JSON.parse(await readFile(join(SOURCES_DIR, "meta.json"), "utf8").catch(() => "{}"));
+		ok("插件侧记下了 src_ ↔ l2src_ 的映射",
+			/^l2src_/.test(meta[sourceId]?.upstreamId ?? ""),
+			`meta[${sourceId}] = ${JSON.stringify(meta[sourceId] ?? null)}`);
+	}
+	ok("落盘的正文就是用户批准的那一份（不是 l2_archive 又总结一遍的版本）",
+		written.includes("拉格朗日中值定理是罗尔定理的推广"));
 	ok("frontmatter 与上游 SCHEMA 同构",
 		["title:", "created:", "type: concept", "tags:", "sources:", "source_ids:", "updated:", "status:", "confidence:"]
 			.every((k) => written.includes(k)));
 
-	const dup = await post("/api/page/create", {
-		sourceId, title: TITLES[0], summary: "x", tags: [], links: [],
-		facts: [{ text: "拉格朗日中值定理是罗尔定理的推广", quote: "拉格朗日中值定理是罗尔定理的推广" }],
+	// ── 同名页的行为在 v2.0 变了，这条断言跟着反过来 ──
+	// 旧行为：409「已经有一页叫这个了」。
+	// 新行为：**用用户批准的版本覆盖**（人类裁定 2026-08-07）。
+	// 理由是实测发现 l2_archive 的 maintainLinkedWikiPages 十有八九**自己就建了同名页**，
+	// 于是"建用户批准的那一页"必然撞名——再报 409 就等于这条链路根本走不通。
+	// 覆盖的只是正文；created / status / confidence 等页面自身历史保留，
+	// tags / sources / source_ids 做并集（见 l2-editor-routes.ts）。
+	const dup = await createAndWait({
+		sourceId, title: TITLES[0], summary: "第二次写入的说明。", tags: ["第二次"], links: [],
+		facts: [{ text: "罗尔定理要求两端点函数值相等", quote: "且两端点函数值相等" }],
 	});
-	ok("同名页面不会被覆盖", dup.status === 409 && dup.body.reason === "exists");
+	ok("同名页被用户批准的新版本覆盖（不再报 409）", dup.status === 200 && dup.body.ok === true);
+	{
+		const again = await readFile(pagePath(TITLES[0]), "utf8");
+		ok("覆盖后正文是第二次的内容", again.includes("罗尔定理要求两端点函数值相等"));
+		ok("覆盖保留了页面原有的 created", /created: \d{4}-\d{2}-\d{2}/.test(again));
+		ok("覆盖把标签做了并集，没抹掉第一次的", again.includes("测试") && again.includes("第二次"));
+	}
 } finally {
 	await cleanup(sourceId, multiId);
 }

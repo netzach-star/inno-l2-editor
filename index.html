@@ -482,6 +482,9 @@
     padding: .28rem .5rem; outline: none;
   }
   .cfgSel:focus { border-color: var(--accent); }
+  /* summary 没有引文出处，视觉上必须与有锚点的要点区分开（红线 3） */
+  .noSrcNote { font-weight: 400; font-size: .72rem; color: var(--warning); margin-left: .4rem; }
+  .noSrcField { border-left: 3px solid var(--warning) !important; }
 </style>
 </head>
 <body>
@@ -563,6 +566,10 @@ function setHeader(id, text) {
 }
 installCloseButtons();
 const TYPE_LABEL = { "source-summary": "资料摘要", concept: "概念", entity: "实体", analysis: "分析" };
+/* 定位到了没有。口径必须与 citation.mjs 的 isAnchored 一致——两边各写一套就会出现
+   "服务端说定位到了、界面说没有"这种最难查的不一致。
+   `fuzzy`（模糊重锚）属 A2、按 0.6 后移，但这里已经按三值写好，A2 落地时不用改。 */
+const anchored = (f) => f.anchor !== undefined && f.anchor !== "none";
 const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
 
 /* ---------------- Markdown 渲染（一～五级标题、有序/无序列表、行内标记） ---------------- */
@@ -1191,15 +1198,15 @@ async function runCompile() {
     const out = await r.json();
     if (!r.ok || !out.ok) throw new Error(out.error ?? `HTTP ${r.status}`);
     G.draft = out.draft; G.stats = out.stats; G.meta = { ...out.model, ...out.isolation };
-    // 默认只勾选通过校验的条目；核不上的连勾都勾不了
-    G.picked = new Set(out.draft.facts.filter((f) => f.verified).map((f) => f.index));
+    // 默认只勾选定位到出处的条目；没定位到的连勾都勾不了
+    G.picked = new Set(out.draft.facts.filter((f) => anchored(f)).map((f) => f.index));
   } catch (err) {
     G.error = String(err.message ?? err);
   } finally { G.busy = false; drawGen(); }
 }
 
 async function saveGenerated() {
-  const facts = G.draft.facts.filter((f) => f.verified && G.picked.has(f.index))
+  const facts = G.draft.facts.filter((f) => anchored(f) && G.picked.has(f.index))
     .map((f) => ({ text: f.text, quote: f.quote }));
   if (!facts.length) { G.error = "至少要留一条通过核对的内容"; return drawGen(); }
   G.busy = true; G.error = null; drawGen();
@@ -1407,18 +1414,23 @@ function drawGenReview(box) {
   // 核对结果摆在最前面：先说清楚哪些能信，再谈内容
   const tally = document.createElement("div");
   tally.className = "tally";
-  tally.innerHTML = `<span><span class="n good">${G.stats.verified}</span> 条核对通过</span>
-    <span><span class="n bad">${G.stats.blocked}</span> 条核不上，已拦下</span>
+  tally.innerHTML = `<span><span class="n good">${G.stats.anchored}</span> 条已定位到出处</span>
+    <span><span class="n bad">${G.stats.unanchored}</span> 条未找到出处，已拦下</span>
     <span style="color:var(--text-subtle);font-size:.78rem">
-      每条都拿它的引文去冻结来源里逐字比对过</span>`;
+      「定位」= 这段引文在冻结来源里逐字找得到。它不保证这句话确实<b>被</b>这段原文支持——
+      那要你自己看一眼</span>`;
   box.append(tally);
 
   for (const [label, key] of [["标题", "title"], ["一句话说明", "summary"]]) {
     const f = document.createElement("div");
     f.className = "genField";
-    f.innerHTML = `<label>${label}</label>`;
+    // summary 绕开了引文定位，直接写进页面。既然做不到逐句溯源，就如实标注，
+    // 而不是让它和有出处的要点长得一样（红线 3，设计文档 §1「summary 的处理」）。
+    f.innerHTML = key === "summary"
+      ? `<label>${label} <span class="noSrcNote">AI 概括，未逐句溯源 —— 存盘前请自己过一眼</span></label>`
+      : `<label>${label}</label>`;
     const el = document.createElement(key === "summary" ? "textarea" : "input");
-    if (key === "summary") el.rows = 2;
+    if (key === "summary") { el.rows = 2; el.className = "noSrcField"; }
     el.value = G.draft[key];
     el.oninput = () => { G.draft[key] = el.value; };
     f.append(el);
@@ -1427,24 +1439,24 @@ function drawGenReview(box) {
 
   const lab = document.createElement("div");
   lab.className = "genField";
-  lab.innerHTML = `<label>要点（勾掉不想要的；核不上的不能勾）</label>`;
+  lab.innerHTML = `<label>要点（勾掉不想要的；未找到出处的不能勾）</label>`;
   box.append(lab);
 
   for (const f of G.draft.facts) {
     const el = document.createElement("div");
-    el.className = "fact " + (f.verified ? "okv" : "bad");
+    el.className = "fact " + (anchored(f) ? "okv" : "bad");
     const top = document.createElement("div");
     top.className = "ftop";
     const cb = document.createElement("input");
     cb.type = "checkbox";
-    cb.checked = f.verified && G.picked.has(f.index);
-    cb.disabled = !f.verified;                       // 核不上的，勾都勾不了
+    cb.checked = anchored(f) && G.picked.has(f.index);
+    cb.disabled = !anchored(f);                      // 没定位到出处的，勾都勾不了
     cb.onchange = () => { cb.checked ? G.picked.add(f.index) : G.picked.delete(f.index); drawGen(); };
     const txt = document.createElement("div");
     txt.className = "ftext"; txt.textContent = f.text;
     const badge = document.createElement("span");
     badge.className = "badge";
-    badge.textContent = f.verified ? "✓ 出处已核对" : "✗ 核不上";
+    badge.textContent = anchored(f) ? "✓ 已定位到出处" : "✗ 未找到出处";
     top.append(cb, txt, badge);
     el.append(top);
 
@@ -1453,10 +1465,10 @@ function drawGenReview(box) {
       q.textContent = f.quote;
       el.append(q);
     }
-    if (!f.verified) {
+    if (!anchored(f)) {
       const why = document.createElement("div");
       why.className = "why";
-      why.textContent = f.problem?.message ?? "核对失败";
+      why.textContent = f.problem?.message ?? "未找到出处";
       el.append(why);
     }
     box.append(el);
@@ -1475,7 +1487,7 @@ function drawGenReview(box) {
   bar.className = "pBar";
   const save = document.createElement("button");
   save.className = "save"; save.type = "button";
-  const n = G.draft.facts.filter((f) => f.verified && G.picked.has(f.index)).length;
+  const n = G.draft.facts.filter((f) => anchored(f) && G.picked.has(f.index)).length;
   save.textContent = G.busy ? "写入中…" : `建这一页（${n} 条）`;
   save.disabled = G.busy || n === 0;
   save.onclick = saveGenerated;
@@ -1496,9 +1508,9 @@ function drawGenReview(box) {
   const note = document.createElement("div");
   note.className = "pNote";
   note.innerHTML = `按「建这一页」之前，知识库里什么都没变。<br>
-    核不上的条目<b>不会</b>被写进去，也<b>没有</b>被悄悄删掉 —— 它们留在上面，
-    好让你看见模型说了什么、以及为什么不能信。<br>
-    写盘那一刻服务端会<b>再核对一遍</b>，界面上的勾选骗不过它。`;
+    未找到出处的条目<b>不会</b>被写进去，也<b>没有</b>被悄悄删掉 —— 它们留在上面，
+    好让你看见模型说了什么、以及为什么找不到依据。<br>
+    写盘那一刻服务端会<b>再定位一遍</b>，界面上的勾选骗不过它。`;
   box.append(note);
 }
 

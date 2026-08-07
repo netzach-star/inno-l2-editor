@@ -21,47 +21,87 @@ const SRC = [
 	"柯西中值定理进一步把它推广到两个函数的情形。",
 ].join("\n");
 
-console.log("\n引文校验与来源冻结核验（S-C 最小版）\n");
+console.log("\n引文定位与来源冻结核验（U-A/A1）\n");
 
-console.log("一、引文必须是冻结来源的精确子串（红线 2）");
+console.log("一、引文必须能在冻结来源里定位到（红线 2）");
 {
 	const r = validateFacts([
 		{ text: "罗尔定理需要端点值相等", quote: "且两端点函数值相等" },
 		{ text: "拉格朗日是罗尔的推广", quote: "拉格朗日中值定理是罗尔定理的推广" },
 	], SRC);
-	ok("照抄原文的引文通过", r.every((f) => f.verified));
+	ok("照抄原文的引文能定位到", r.every((f) => f.anchor === "exact"));
 }
 {
 	const r = validateFacts([
 		{ text: "罗尔定理由柯西在1823年提出", quote: "罗尔定理由柯西在1823年提出" },
 	], SRC);
-	ok("编造的引文被拦下", !r[0].verified && r[0].problem.code === "QUOTE_NOT_IN_SOURCE");
+	ok("编造的引文被拦下（§1 要求这条必须仍然通过）", r[0].anchor === "none" && r[0].problem.code === "QUOTE_NOT_IN_SOURCE");
 }
 {
 	// 最危险的一类：话说得对，但引文是改写的而不是照抄的
 	const r = validateFacts([
 		{ text: "拉格朗日是罗尔的推广", quote: "拉格朗日中值定理乃罗尔定理之推广" },
 	], SRC);
-	ok("改写过（而非照抄）的引文被拦下", !r[0].verified);
+	// §1 说这条在 A2（模糊重锚）落地后应改判为 fuzzy 并附真原文。
+	// 但 A2 按 0.6 后移，本批次只做第 0 层（剥记号），它是精确的、不救改写。
+	// 所以现在**仍然拦下**，等 A2 时再连同断言一起改。
+	ok("改写过（而非照抄）的引文被拦下 —— A2 落地后此条改判 fuzzy", r[0].anchor === "none");
 }
 {
 	const r = validateFacts([
 		{ text: "有这么回事", quote: "" },
 		{ text: "", quote: "罗尔定理" },
 	], SRC);
-	ok("没有引文的被拦下", !r[0].verified && r[0].problem.code === "MISSING_QUOTE");
-	ok("空事实被拦下", !r[1].verified && r[1].problem.code === "EMPTY_FACT");
+	ok("没有引文的被拦下", r[0].anchor === "none" && r[0].problem.code === "MISSING_QUOTE");
+	ok("空要点被拦下", r[1].anchor === "none" && r[1].problem.code === "EMPTY_FACT");
 }
 {
 	const r = validateFacts([{ text: "长", quote: "罗".repeat(501) }], SRC);
-	ok("超长引文被拦下", !r[0].verified && r[0].problem.code === "QUOTE_TOO_LONG");
+	ok("超长引文被拦下", r[0].anchor === "none" && r[0].problem.code === "QUOTE_TOO_LONG");
 }
 {
 	// 拼接：两段都在原文里，但连起来不在
 	const r = validateFacts([
 		{ text: "拼的", quote: "罗尔定理要求函数在闭区间连续柯西中值定理进一步" },
 	], SRC);
-	ok("把两处原文拼起来的引文被拦下", !r[0].verified);
+	ok("把两处原文拼起来的引文被拦下（§1 要求这条必须仍然通过）", r[0].anchor === "none");
+}
+
+console.log("\n一之二、第 0 层：剥 Markdown 记号（U-A/A1）");
+{
+	// 原文里带记号、模型抄成纯文本——这是 §1 表里的第一类**误杀**，必须救回来
+	const marked = "罗尔定理要求函数在闭区间连续，**且两端点函数值相等**，"
+		+ "而 [[拉格朗日中值定理]] 是它的推广，参见 `mean value theorem`。";
+	const norm = normalizeForQuoteMatch(marked);
+	ok("原文带 ** 记号、引文抄成纯文本，仍能定位到",
+		checkQuote("且两端点函数值相等", norm) === null);
+	ok("原文带 [[ ]]、引文抄成纯文本，仍能定位到",
+		checkQuote("拉格朗日中值定理", norm) === null);
+	ok("原文带反引号、引文抄成纯文本，仍能定位到",
+		checkQuote("mean value theorem", norm) === null);
+	ok("反过来也行：引文带记号、原文是纯文本",
+		checkQuote("**且两端点函数值相等**", normalizeForQuoteMatch("……且两端点函数值相等……")) === null);
+	// 关键：剥记号只删记号字符，从不删实体文字，所以该拦的照样拦得住
+	ok("剥了记号之后，编造的仍然拦得住",
+		checkQuote("罗尔定理由柯西在1823年提出", norm) !== null);
+	ok("剥了记号之后，拼接的仍然拦得住",
+		checkQuote("罗尔定理要求函数在闭区间连续是它的推广", norm) !== null);
+	ok("[[目标|显示]] 取前半段，与 normalizeWikiLink 同口径",
+		normalizeForQuoteMatch("见 [[实数完备性|完备性]] 一节").includes("实数完备性"));
+}
+
+console.log("\n一之三、字段名与能力一致（红线 3）");
+{
+	const r = validateFacts([{ text: "x", quote: "且两端点函数值相等" }], SRC);
+	ok("字段叫 anchor，不叫 verified", "anchor" in r[0] && !("verified" in r[0]));
+	ok("取值是 exact / none 之一", ["exact", "none"].includes(r[0].anchor));
+	// §1 事实三：定位证明不了「这句话被这段原文支持」。这条断言把这个边界钉死，
+	// 免得将来有人看到 anchor==="exact" 就当成"已核实"。
+	const nonsense = validateFacts([
+		{ text: "地球是平的", quote: "拉格朗日中值定理是罗尔定理的推广" },
+	], SRC);
+	ok("语义无关的要点照样能『定位到』—— 这正是它不叫 verified 的原因",
+		nonsense[0].anchor === "exact");
 }
 
 console.log("\n二、规范化不制造假阴性（合法引用不该被误杀）");
@@ -123,10 +163,10 @@ try {
 	ok("原件被改动后对账失败", v2.intact === false);
 
 	// 篡改后，原本合法的引文仍然「能匹配」——但这正是为什么要有对账：
-	// 引文校验只保证「和文件一致」，冻结校验才保证「文件和摄入时一致」
+	// 引文定位只保证「和文件一致」，冻结对账才保证「文件和摄入时一致」
 	const tampered = await readSource(dir, meta.sourceId);
 	const r = validateFacts([{ text: "偷加的", quote: "偷偷加的一句" }], tampered.text);
-	ok("篡改后的内容能骗过引文校验（所以必须先查冻结）", r[0].verified === true);
+	ok("篡改后的内容能骗过引文定位（所以必须先查冻结）", r[0].anchor === "exact");
 	ok("但冻结对账拦得住它", (await verifySource(dir, meta.sourceId)).intact === false);
 
 	ok("sourceIdFor 对同一内容稳定", sourceIdFor(SRC).sourceId === sourceIdFor(SRC).sourceId);
