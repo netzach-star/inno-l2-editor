@@ -11,9 +11,11 @@ import { createServer } from "node:http";
 import { readFile, writeFile, readdir, stat, mkdir } from "node:fs/promises";
 import { join, dirname, relative, sep } from "node:path";
 import { existsSync } from "node:fs";
+import { createHash } from "node:crypto";
 import { fileURLToPath } from "node:url";
 import { validateFacts } from "./citation.mjs";
 import { ingestSource, listSources, readSource, verifySource } from "./source-store.mjs";
+import { patchFrontmatter, readBodyRaw, readFields, replaceBody } from "./frontmatter.mjs";
 
 const ROOT = dirname(fileURLToPath(import.meta.url));
 
@@ -48,6 +50,53 @@ function resolveWikiDir() {
 const WIKI_SRC = resolveWikiDir();
 const WIKI = WIKI_SRC.dir;
 const SOURCES = process.env.INNO_SOURCES_DIR ?? join(ROOT, "data", "sources");
+// 删除前的回收站副本落在这里（执行决议 D-03）。
+// 刻意放在**插件自己的** data/ 下、而不是上游 l2/ 里：上游 rebuildIndex 是扫盘的
+// （wiki-maintainer.ts:418），副本只要落在它的扫描范围内就会被当成正常页收回索引。
+const TRASH = process.env.INNO_TRASH_DIR ?? join(ROOT, "data", ".trash");
+
+/**
+ * 上游 InnoSpark 的地址。**所有写入都从这里走。**
+ *
+ * 为什么写入不能由插件自己落盘（设计文档 §4 + 人类裁定 2026-08-07）：
+ * 磁盘上的 `l2/` 有多个写入方（上游 agent 的 `l2_archive`、上游 Notebook、本插件），
+ * 而唯一关得死的乐观锁必须让"读盘比对 + 写入"发生在**同一个进程的同一次请求里**。
+ * 插件自己"先 GET 算 hash → 比对 → 再写"只是把窗口从几分钟缩到几十毫秒，没关死；
+ * 一条关不死的护栏被叫做乐观锁，就是红线 3。
+ *
+ * 上游没在跑时**如实报错**，不降级偷偷直写文件。
+ */
+const UPSTREAM = (process.env.INNO_UPSTREAM ?? "http://localhost:3000").replace(/\/+$/, "");
+
+/** 整个文件**原始字节**的 sha256。口径必须和上游 `PUT /api/l2/page` 那边一致。 */
+function revisionOf(buf) {
+	return createHash("sha256").update(buf).digest("hex");
+}
+
+/**
+ * 调上游。连不上时抛一个带 `reason` 的错，由调用方翻译成如实的界面文案。
+ * 绝不 catch 之后自己写盘——那正是 §4 说的"降级偷偷直写"。
+ */
+async function callUpstream(method, path, body) {
+	let resp;
+	try {
+		resp = await fetch(`${UPSTREAM}${path}`, {
+			method,
+			headers: { "content-type": "application/json" },
+			body: body === undefined ? undefined : JSON.stringify(body),
+			signal: AbortSignal.timeout(300_000),
+		});
+	} catch (err) {
+		const e = new Error(`连不上 InnoSpark（${UPSTREAM}）：${err?.message ?? err}`);
+		e.reason = "upstream_down";
+		throw e;
+	}
+	let data = null;
+	try {
+		data = await resp.json();
+	} catch { /* 上游可能返回空体 */ }
+	return { status: resp.status, data };
+}
 
 // 设置面板里选的模型。只在进程内生效——重启回到配置文件的默认值。
 // 刻意不落盘：这是个调试期的开关，不该悄悄改掉用户 InnoSpark 的配置
@@ -152,27 +201,22 @@ function parseManagedBlock(body) {
 	return { links, free: (body.slice(0, idx) + rest).replace(/\n{3,}/g, "\n\n") };
 }
 
-function buildFile(fmLines, freeBody, tags, links, titleToPath) {
-	const today = new Date().toISOString().slice(0, 10);
-	const out = fmLines.map((line) => {
-		if (line.startsWith("tags:")) return `tags: [${tags.join(", ")}]`;
-		if (line.startsWith("updated:")) return `updated: ${today}`;
-		return line;
+/**
+ * 合成正文 = 用户自由区 + `## 相关知识` 那一段。
+ *
+ * 只有在**关联或正文真的被改了**的时候才调它——正文是整段替换的
+ * （§10.2 的 2026-08-05 修订：正文不再做区间 patch，与上游 Notebook 的 MDEditor 同语义）。
+ * 只改标签 / status 的时候不碰正文，那条路径走 `patchFrontmatter`，正文字节不变。
+ *
+ * 注意这里**不**再 trimEnd、**不**再压连续换行——那正是 §10.2 要修掉的两条。
+ */
+function composeBody(freeBody, links, titleToPath) {
+	if (links.length === 0) return freeBody;
+	const lines = links.map((t) => {
+		const p = titleToPath.get(t);
+		return p ? `- [[${t}]] — \`${p}\`` : `- [[${t}]]`;
 	});
-	if (!out.some((l) => l.startsWith("tags:"))) out.push(`tags: [${tags.join(", ")}]`);
-	if (!out.some((l) => l.startsWith("updated:"))) out.push(`updated: ${today}`);
-
-	let body = freeBody.trimEnd();
-	if (links.length > 0) {
-		const lines = links.map((t) => {
-			const p = titleToPath.get(t);
-			return p ? `- [[${t}]] — \`${p}\`` : `- [[${t}]]`;
-		});
-		body += `\n\n${MANAGED_HEADING}\n\n${lines.join("\n")}\n`;
-	} else {
-		body += "\n";
-	}
-	return `---\n${out.join("\n")}\n---\n${body}`;
+	return `${freeBody.replace(/\s*$/, "")}\n\n${MANAGED_HEADING}\n\n${lines.join("\n")}\n`;
 }
 
 /* ---------------- 目录扫描 ---------------- */
@@ -212,6 +256,36 @@ async function buildCatalog() {
 	return { pages, tags };
 }
 
+/**
+ * 谁链向这一页（U-F①，设计文档 §6 的第一项）。
+ *
+ * **查询得出，不是存出来的。** 这一条从"后移的增强"变成了当前批次的必需品：
+ * §11 取消了双向落盘（正文 wikilink 只写发起的那一边），
+ * 没有反向链接的话，用户打开 B 页就看不到 A —— 取消双向存储等于让关联消失一半。
+ *
+ * 口径和 `/api/graph` 完全一致：同一套 `resolve`（移植上游 wiki-links.ts 的归一化），
+ * 扫每一页的出链，筛出指向目标的那些。两处不能各写一套。
+ *
+ * 不含 `excerpt`（链接出现在哪一句）——那要额外记链接的字符偏移，属后移部分（§6）。
+ */
+async function computeBacklinks(targetPath, pages, resolve) {
+	if (!targetPath) return [];
+	const out = [];
+	for (const p of pages) {
+		if (p.path === targetPath) continue;
+		const abs = safePath(p.path);
+		if (!abs) continue;
+		const { body } = splitFrontmatter(await readFile(abs, "utf8"));
+		for (const rawLink of extractOutgoingLinks(body)) {
+			if (resolve(rawLink) === targetPath) {
+				out.push({ path: p.path, title: p.title, type: p.type });
+				break; // 一页只报一次，不管它链了几次
+			}
+		}
+	}
+	return out.sort((a, b) => a.title.localeCompare(b.title, "zh"));
+}
+
 function safePath(rel) {
 	if (typeof rel !== "string" || !rel.startsWith("wiki/")) return null;
 	const abs = join(WIKI, rel.slice("wiki/".length));
@@ -219,6 +293,123 @@ function safePath(rel) {
 	if (inside.startsWith("..") || inside.startsWith(sep) || inside.includes("..")) return null;
 	if (!abs.endsWith(".md")) return null;
 	return abs;
+}
+
+/* ---------------- 后台归档任务 ---------------- */
+
+// 只在内存里。任务是编辑期的一次动作，不是需要持久化的状态；
+// 进程重启后未完成的任务本来也接不回去，假装能接回去比丢掉更糟。
+const TASKS = new Map();
+
+/**
+ * 插件的 `src_<12位hash>` ↔ 上游 manifest 的 `l2src_<8位随机>` 的映射。
+ *
+ * 存在**插件自己**的 meta.json 里，不往上游的数据结构里塞字段（§4）：
+ * 上游的 `ManifestEntry` 是它的契约，我们加字段就等于又制造了一处需要跟随的格式。
+ */
+async function recordSourceMapping(pluginSourceId, upstreamId, wikiPagePath) {
+	const file = join(SOURCES, "meta.json");
+	let meta = {};
+	try {
+		meta = JSON.parse(await readFile(file, "utf8"));
+	} catch { /* 还没有就从空的开始 */ }
+	meta[pluginSourceId] = {
+		upstreamId,
+		wikiPagePath,
+		archivedAt: new Date().toISOString(),
+	};
+	await mkdir(SOURCES, { recursive: true });
+	await writeFile(file, `${JSON.stringify(meta, null, "\t")}\n`, "utf8");
+}
+
+/**
+ * 归档 = 两步，顺序不能反。
+ *
+ *   ① POST /api/l2/archive        把**冻结来源原文**归档成一份资料
+ *                                 （五个副作用由它全包：manifest / index.md /
+ *                                  BM25 / overview / log.md）
+ *   ② POST /api/l2/page/concept   把**用户逐条核对过的正文**落成 concept / entity 页
+ *
+ * 为什么要分两步（执行决议 D-10，实测发现）：
+ * `l2_archive` 内部会对传进去的 content 再跑一次 `summarizeContent`，
+ * 落盘的是**模型重写的版本**。要是把用户批准的草稿直接喂给它，
+ * 用户逐条勾选核对过的那一份就只会进 raw/，永远上不了页面——
+ * 引文闸门守住的东西在最后一米又被一个没有引文校验的模型改了一遍。
+ *
+ * 所以 ① 喂的是**原始资料**（它本来就该归档这个），② 才写用户批准的正文。
+ */
+function startArchiveTask({ title, type, tags, body, source, factCount }) {
+	const id = `task_${createHash("sha256").update(`${title}${Date.now()}`).digest("hex").slice(0, 10)}`;
+	const task = {
+		id,
+		state: "running",
+		step: "归档资料到 InnoSpark…",
+		title,
+		startedAt: new Date().toISOString(),
+	};
+	TASKS.set(id, task);
+
+	(async () => {
+		// ① 归档冻结来源的原文
+		const archived = await callUpstream("POST", "/api/l2/archive", {
+			title: source.meta.title || source.meta.filename || title,
+			content: source.text,
+			sourceType: "markdown",
+			tags,
+			origin: "conversation",
+		});
+		if (archived.status !== 200) {
+			throw Object.assign(new Error(archived.data?.error ?? `上游返回 ${archived.status}`), {
+				detail: archived.data?.detail,
+			});
+		}
+		const upstreamId = archived.data?.details?.id ?? "";
+		const sourcePagePath = archived.data?.details?.wikiPagePath ?? "";
+
+		// ② 把用户批准的正文落成页面
+		task.step = "写入你核对过的内容…";
+		const page = await callUpstream("POST", "/api/l2/page/concept", {
+			title,
+			type,
+			body,
+			tags,
+			sourceId: upstreamId,
+			sourcePagePath,
+			// 人类裁定（2026-08-07）：撞名时用用户批准的版本覆盖。
+			// l2_archive 的 maintainLinkedWikiPages 十有八九已经建了同名页。
+			overwrite: true,
+		});
+		if (page.status !== 200) {
+			throw new Error(page.data?.error ?? `上游返回 ${page.status}`);
+		}
+
+		await recordSourceMapping(source.meta.sourceId, upstreamId, page.data.path);
+		return { path: page.data.path, upstreamId, sourcePagePath, overwritten: page.data.overwritten };
+	})().then(
+		(result) => {
+			Object.assign(task, {
+				state: "done",
+				step: "",
+				result: { ...result, facts: factCount },
+				finishedAt: new Date().toISOString(),
+			});
+		},
+		(err) => {
+			// 失败要给出**可读的原因**，不吞（§4 完成定义）
+			Object.assign(task, {
+				state: "failed",
+				step: "",
+				reason: err?.reason ?? "upstream_error",
+				error: err?.reason === "upstream_down"
+					? `归档不可用：${err.message}`
+					: String(err?.message ?? err),
+				detail: err?.detail,
+				finishedAt: new Date().toISOString(),
+			});
+		},
+	);
+
+	return task;
 }
 
 /* ---------------- HTTP ---------------- */
@@ -336,10 +527,11 @@ const server = createServer(async (req, res) => {
 		if (req.method === "GET" && url.pathname === "/api/page") {
 			const abs = safePath(url.searchParams.get("path"));
 			if (!abs) return json(res, 400, { error: "非法路径" });
-			const raw = await readFile(abs, "utf8");
+			const bytes = await readFile(abs);
+			const raw = bytes.toString("utf8");
 			const { fmLines, body } = splitFrontmatter(raw);
 			const { links, free } = parseManagedBlock(body);
-			const st = await stat(abs);
+			const fields = readFields(raw);
 
 			// 正文自由区里手写的 [[链接]] 同样算正式关联（用户裁定），
 			// 但它的载体是正文，因此只读回报，不在面板里直接删
@@ -357,64 +549,127 @@ const server = createServer(async (req, res) => {
 				bodyLinks.push({ raw: rawLink, title, path: target, resolved: Boolean(target) });
 			}
 
+			// 被谁引用（U-F①）。数据来自和 /api/graph 同一份边集合，
+			// **是算出来的，不是 B 页正文里存的**——正文 wikilink 只存一次（§11）。
+			// 标明只读：它是别的页写的，不该在这里改（ADR-V2-021 的分区所有权）。
+			const backlinks = await computeBacklinks(url.searchParams.get("path"), all, resolve);
+
 			return json(res, 200, {
 				path: url.searchParams.get("path"),
-				title: readField(fmLines, "title") ?? "",
-				type: readField(fmLines, "type") ?? "",
-				updated: readField(fmLines, "updated") ?? "",
-				status: readField(fmLines, "status") ?? "",
-				tags: parseInlineArray(readField(fmLines, "tags")),
+				title: fields.title ?? "",
+				type: fields.type ?? "",
+				updated: fields.updated ?? "",
+				status: fields.status ?? "",
+				confidence: fields.confidence ?? "",
+				tags: Array.isArray(fields.tags) ? fields.tags : [],
 				links,
 				bodyLinks,
+				backlinks,
 				body: free,
-				mtimeMs: st.mtimeMs,
+				// 乐观锁的凭据（§10.1）。哈希的是**整个文件**，不只是正文——
+				// l2_archive 改的恰恰是 frontmatter（source_ids / updated / contested），
+				// 只哈希正文这条护栏就漏了一半。
+				revisionHash: revisionOf(bytes),
 			});
 		}
 
+		// 保存。三件事在这里同时落地：
+		//   U-J-1 乐观锁     —— 必须带 baseRevision，比对与写入在上游同一次请求里做完
+		//   U-J-2 区间写回   —— 只 patch 托管字段那几段字节，其余原样搬运
+		//   U-K  单边存储    —— **不再写对端**。在 A 页加关联只写 A 这一个文件
 		if (req.method === "PUT" && url.pathname === "/api/page") {
 			const payload = await readBody(req);
 			const abs = safePath(payload.path);
 			if (!abs) return json(res, 400, { error: "非法路径" });
 
-			// 以文件为准：写回前重读磁盘。用户在界面里改过正文时以界面为准，
-			// 否则取磁盘上的最新内容（用户可能刚在 Obsidian 里手改过）
-			const raw = await readFile(abs, "utf8");
-			const { fmLines, body } = splitFrontmatter(raw);
-			const onDisk = parseManagedBlock(body);
-			const free = typeof payload.body === "string" ? payload.body : onDisk.free;
+			const baseRevision = typeof payload.baseRevision === "string" ? payload.baseRevision : "";
+			if (!baseRevision) {
+				// 不给"不带就直接覆盖"的后门——那样这条护栏可以被绕过，就不是锁了
+				return json(res, 400, { error: "缺少 baseRevision，拒绝无版本写入" });
+			}
+
+			const bytes = await readFile(abs);
+			const raw = bytes.toString("utf8");
+
+			// 本地先比一次。这一比**不是**锁——真正的锁在上游那一次请求里；
+			// 这里只是为了在明显过期时早点把差异摆给用户，省一次往返。
+			if (revisionOf(bytes) !== baseRevision) {
+				return json(res, 409, {
+					ok: false,
+					reason: "stale",
+					error: "这一页在你编辑期间被改过了",
+					revisionHash: revisionOf(bytes),
+					content: raw,
+				});
+			}
 
 			const { pages } = await buildCatalog();
 			const titleToPath = new Map(pages.map((p) => [p.title, p.path]));
 
-			const tags = [...new Set((payload.tags ?? []).map((s) => String(s).trim()).filter(Boolean))];
-			const links = [...new Set((payload.links ?? []).map((s) => String(s).trim()).filter(Boolean))];
-
-			await writeFile(abs, buildFile(fmLines, free, tags, links, titleToPath), "utf8");
-
-			// 双向关联：对端也要出现这一条（D-02 的最小形态）
-			const applied = [];
-			const self = pages.find((p) => p.path === payload.path);
-			if (self) {
-				for (const target of links) {
-					const t = pages.find((p) => p.title === target);
-					if (!t) continue;
-					const tAbs = safePath(t.path);
-					if (!tAbs) continue;
-					const tRaw = await readFile(tAbs, "utf8");
-					const tParts = splitFrontmatter(tRaw);
-					const tBlock = parseManagedBlock(tParts.body);
-					if (tBlock.links.includes(self.title)) continue;
-					const tTags = parseInlineArray(readField(tParts.fmLines, "tags"));
-					await writeFile(
-						tAbs,
-						buildFile(tParts.fmLines, tBlock.free, tTags, [...tBlock.links, self.title], titleToPath),
-						"utf8",
-					);
-					applied.push(t.title);
-				}
+			/* ---- 1. frontmatter：只动托管字段的字节区间 ---- */
+			const updates = { updated: new Date().toISOString().slice(0, 10) };
+			if (Array.isArray(payload.tags)) {
+				updates.tags = [...new Set(payload.tags.map((s) => String(s).trim()).filter(Boolean))];
+			}
+			for (const key of ["status", "confidence"]) {
+				if (typeof payload[key] === "string" && payload[key]) updates[key] = payload[key];
+			}
+			let next;
+			try {
+				next = patchFrontmatter(raw, updates);
+			} catch (err) {
+				return json(res, 422, { ok: false, error: String(err?.message ?? err) });
 			}
 
-			return json(res, 200, { ok: true, reverseSynced: applied });
+			/* ---- 2. 正文：只有真被改了才整段替换，否则一个字节不碰 ---- */
+			const bodyGiven = typeof payload.body === "string";
+			const linksGiven = Array.isArray(payload.links);
+			if (bodyGiven || linksGiven) {
+				const onDisk = parseManagedBlock(splitFrontmatter(raw).body);
+				const free = bodyGiven ? payload.body : onDisk.free;
+				const links = linksGiven
+					? [...new Set(payload.links.map((s) => String(s).trim()).filter(Boolean))]
+					: onDisk.links;
+				next = replaceBody(next, composeBody(free, links, titleToPath));
+			}
+
+			// 内容没变就不写。省掉一次无谓的 mtime 变动与一次重索引
+			if (next === raw) return json(res, 200, { ok: true, unchanged: true, revisionHash: baseRevision });
+
+			/* ---- 3. 写入：转发给上游，比对与写盘在它那一次请求里完成 ---- */
+			let up;
+			try {
+				up = await callUpstream("PUT", "/api/l2/page", {
+					path: payload.path,
+					content: next,
+					baseRevision,
+				});
+			} catch (err) {
+				return json(res, 503, {
+					ok: false,
+					reason: err.reason ?? "upstream_error",
+					error: `保存不可用：${err.message}`,
+				});
+			}
+			if (up.status === 409) {
+				return json(res, 409, {
+					ok: false,
+					reason: "stale",
+					error: "这一页在你保存的瞬间被改过了",
+					revisionHash: up.data?.revisionHash ?? "",
+					content: up.data?.content ?? "",
+				});
+			}
+			if (up.status !== 200) {
+				return json(res, 502, {
+					ok: false,
+					reason: "upstream_error",
+					error: up.data?.error ?? `上游返回 ${up.status}`,
+				});
+			}
+			// 刻意**没有** reverseSynced —— 对端写入已按 §11 拆掉。
+			// 关联只存发起的那一边，反向链接由 GET /api/page 的 backlinks 查询得出。
+			return json(res, 200, { ok: true, revisionHash: up.data?.revisionHash ?? "" });
 		}
 
 		// 模型是否可用 + 配置从哪来 + 有哪些模型可选。
@@ -618,19 +873,14 @@ const server = createServer(async (req, res) => {
 				});
 			}
 
-			const rel = `wiki/concepts/${title}.md`;
-			const abs = safePath(rel);
-			if (!abs) return json(res, 400, { error: "非法路径" });
-			try {
-				await stat(abs);
-				return json(res, 409, { ok: false, reason: "exists", error: `已经有一页叫「${title}」了` });
-			} catch { /* 不存在，正是我们要的 */ }
-			// 全新装的 InnoSpark 里 wiki/ 连目录都还没有——第一次建页要先把它创出来
-			await mkdir(dirname(abs), { recursive: true });
-
-			const today = new Date().toISOString().slice(0, 10);
-			const tags = [...new Set(["concept", ...(payload.tags ?? []).map((s) => String(s).trim())])].filter(Boolean);
-			const body = [
+			// 到这里为止全是校验，一个字节都还没写。
+			// 真正的写入交给上游，而且**转入后台**：l2_archive 要两次模型调用、
+			// 几秒到十几秒，不能用「保存中…」的模态框把人糊住——那正好打在
+			// 这个产品最贵的成本上（0.5：等待时间）。
+			const type = payload.type === "entity" ? "entity" : "concept";
+			const tags = [...new Set([...(payload.tags ?? []).map((s) => String(s).trim())])].filter(Boolean);
+			const links = [...new Set((payload.links ?? []).map((s) => String(s).trim()).filter(Boolean))];
+			const bodyLines = [
 				`# ${title}`,
 				"",
 				"## 定义",
@@ -641,24 +891,26 @@ const server = createServer(async (req, res) => {
 				"",
 				...facts.map((f) => `- ${f.text}`),
 			];
-			const links = [...new Set((payload.links ?? []).map((s) => String(s).trim()).filter(Boolean))];
-			if (links.length) body.push("", "## 相关知识", "", ...links.map((l) => `- [[${l}]]`));
+			if (links.length) bodyLines.push("", MANAGED_HEADING, "", ...links.map((l) => `- [[${l}]]`));
 
-			const fm = [
-				`title: ${title}`,
-				`created: ${today}`,
-				"type: concept",
-				`tags: [${tags.join(", ")}]`,
-				"sources:",
-				`  - ${source.meta.filename}`,
-				"source_ids:",
-				`  - ${source.meta.sourceId}`,
-				`updated: ${today}`,
-				"status: draft",
-				"confidence: medium",
-			];
-			await writeFile(abs, `---\n${fm.join("\n")}\n---\n${body.join("\n")}\n`, "utf8");
-			return json(res, 200, { ok: true, path: rel, facts: facts.length });
+			const task = startArchiveTask({
+				title,
+				type,
+				tags,
+				body: bodyLines.join("\n"),
+				source,
+				factCount: facts.length,
+			});
+			// 立刻返回，界面照常可浏览（§4「归档的交互：后台任务，不锁死界面」）
+			return json(res, 202, { ok: true, taskId: task.id, state: task.state });
+		}
+
+		// 后台归档任务的进度。前端轮询这个，不轮询就什么也不会发生——
+		// 任务本身在服务端跑，关掉页面也不会中断。
+		if (req.method === "GET" && url.pathname === "/api/task") {
+			const t = TASKS.get(url.searchParams.get("id"));
+			if (!t) return json(res, 404, { error: "没有这个任务" });
+			return json(res, 200, t);
 		}
 
 		json(res, 404, { error: "not found" });
