@@ -529,6 +529,19 @@ const server = createServer(async (req, res) => {
 			if (!abs) return json(res, 400, { error: "非法路径" });
 			const bytes = await readFile(abs);
 			const raw = bytes.toString("utf8");
+
+			// ?raw=1 给**磁盘上的原始字节**。
+			// 「看源码」那个弹窗原先是拿解析后的字段重新拼一份出来的，
+			// 却把标题写成「磁盘上的真实文件」——那是名不副实（红线 3）。
+			// 用户要看的就是真实字节，尤其是在他刚点过一次保存之后。
+			if (url.searchParams.get("raw") === "1") {
+				return json(res, 200, {
+					path: url.searchParams.get("path"),
+					raw,
+					revisionHash: revisionOf(bytes),
+					bytes: bytes.length,
+				});
+			}
 			const { fmLines, body } = splitFrontmatter(raw);
 			const { links, free } = parseManagedBlock(body);
 			const fields = readFields(raw);

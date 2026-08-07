@@ -485,6 +485,66 @@
   /* summary 没有引文出处，视觉上必须与有锚点的要点区分开（红线 3） */
   .noSrcNote { font-weight: 400; font-size: .72rem; color: var(--warning); margin-left: .4rem; }
   .noSrcField { border-left: 3px solid var(--warning) !important; }
+
+  /* ── U-E：搜索与类型过滤 ── */
+  .navSearch {
+    width: calc(100% - 2rem); margin: 0 1rem .5rem; padding: .32rem .5rem;
+    font: inherit; font-size: .82rem; color: var(--text);
+    background: var(--surface); border: 1px solid var(--border); border-radius: 4px;
+  }
+  .navSearch:focus { outline: none; border-color: var(--accent); }
+  .pills { display: flex; flex-wrap: wrap; gap: .25rem; padding: .1rem 1rem .5rem; }
+  .pill {
+    border: 1px solid var(--border); background: var(--surface); color: var(--text-muted);
+    font: inherit; font-size: .72rem; padding: .1rem .42rem; border-radius: 999px; cursor: pointer;
+  }
+  .pill:hover { color: var(--text); }
+  .pill.on { border-color: var(--accent); color: var(--accent); background: var(--accent-soft); }
+  .navSec {
+    font-family: var(--mono); font-size: .64rem; letter-spacing: .1em; color: var(--text-subtle);
+    padding: .6rem 1rem .25rem;
+  }
+  .navSec .n { color: var(--text-subtle); }
+  .navNote { padding: .4rem 1rem .6rem; font-size: .76rem; line-height: 1.5; color: var(--text-subtle); }
+  /* 相关性搜索不可用时必须显眼——不能让人以为精确匹配就是全部结果（红线 3） */
+  .navNote.warn { color: var(--warning); }
+  .nav a.hit {
+    white-space: normal; padding: .35rem 1rem .35rem 1.85rem; line-height: 1.45;
+  }
+  .hitTitle { font-size: .87rem; }
+  .hitBadge {
+    margin-left: .35rem; font-size: .64rem; padding: 0 .3rem; border-radius: 3px;
+    border: 1px solid var(--border); color: var(--text-subtle);
+  }
+  .hitBadge.ok { color: var(--success); border-color: var(--success); }
+  .hitBadge.dim { opacity: .75; }
+  .hitCtx {
+    display: block; font-size: .73rem; color: var(--text-subtle); margin-top: .15rem;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+
+  /* ── U-F①：反向链接是只读的，视觉上要看得出来 ── */
+  .ro { color: var(--text-subtle); font-weight: 400; }
+  .chip.ro {
+    text-decoration: none; color: var(--text-muted);
+    background: transparent; border-style: dashed;
+  }
+  .chip.ro:hover { color: var(--accent); border-color: var(--accent); }
+
+  /* ── 删除是不可逆的，按钮要和别的区分开 ── */
+  .ghost.danger { color: var(--danger); }
+  .ghost.danger:hover { border-color: var(--danger); }
+
+  /* ── 保存冲突：两版并排，不自动合并 ── */
+  .conflictBar { margin-top: .8rem; }
+
+  /* ── 后台归档任务 ── */
+  .taskNote {
+    display: flex; align-items: center; gap: .5rem; padding: .5rem .7rem; margin-top: .6rem;
+    font-size: .82rem; border: 1px solid var(--border); border-radius: 4px;
+    background: var(--surface-muted); color: var(--text-muted);
+  }
+  .taskNote.bad { border-color: var(--danger); color: var(--danger); }
 </style>
 </head>
 <body>
@@ -540,6 +600,8 @@ const S = {
   dirty: false, picking: null, editing: false,
   collapsed: new Set(), theme: localStorage.getItem("theme") || "light",
   graph: null,
+  // U-E：搜索与类型过滤
+  q: "", search: null, searching: false, typeFilter: null, qTimer: null,
 };
 const $ = (id) => document.getElementById(id);
 
@@ -659,7 +721,86 @@ async function handoffFromUrl() {
   if (q.get("auto") === "1") await runCompile();
 }
 
-/* ---------------- 左：可折叠文件树 ---------------- */
+/* ---------------- 左：搜索 + 类型过滤 + 可折叠文件树（U-E） ---------------- */
+
+/**
+ * 搜索。停顿 200ms 才打端点，免得每敲一个字都跑一次 BM25。
+ *
+ * 结果分两类，**界面上分开显示**（执行决议 D-12）：
+ *   精确匹配 —— 插件侧扫标题/标签/正文的原样子串
+ *   相关     —— 上游的 BM25 + 一跳图扩展
+ * 之所以要前者：上游把中文按 bigram 切开再 OR 连接，「数学」这类片段会让
+ * 大量页面成为候选，真正精确命中的那一页反而被排到很后面（实测第 6/8）。
+ * 但它是**补充**不是替代，所以两类分开标注，不混成一锅。
+ */
+function queueSearch(q) {
+  S.q = q;
+  clearTimeout(S.qTimer);
+  if (!q.trim()) { S.search = null; S.searching = false; return drawNav(); }
+  S.searching = true; drawNav();
+  S.qTimer = setTimeout(async () => {
+    try {
+      S.search = await (await fetch(`/api/search?q=${encodeURIComponent(q)}`)).json();
+    } catch {
+      S.search = { exact: [], related: [], upstream: "down" };
+    }
+    S.searching = false;
+    drawNav();
+  }, 200);
+}
+
+function drawSearchResults(nav) {
+  const r = S.search;
+  if (S.searching) {
+    const d = document.createElement("div");
+    d.className = "navNote"; d.textContent = "搜索中…";
+    return nav.append(d);
+  }
+  if (!r) return;
+
+  const row = (item, badge, badgeCls) => {
+    const a = document.createElement("a");
+    a.href = "#";
+    a.className = "hit" + (S.page && S.page.path === item.path ? " on" : "");
+    a.innerHTML = `<span class="hitTitle">${esc(item.title)}</span>` +
+      `<span class="hitBadge ${badgeCls}">${badge}</span>` +
+      (item.context ? `<span class="hitCtx">${esc(item.context)}</span>` : "");
+    a.onclick = (e) => { e.preventDefault(); open(item.path); };
+    nav.append(a);
+  };
+
+  const WHERE = { title: "标题", tag: "标签", body: "正文" };
+  if (r.exact.length) {
+    const h = document.createElement("div");
+    h.className = "navSec";
+    h.innerHTML = `精确匹配 <span class="n">${r.exact.length}</span>`;
+    nav.append(h);
+    for (const e of r.exact) row(e, WHERE[e.where] ?? "命中", "ok");
+  }
+
+  if (r.upstream !== "ok") {
+    // 相关性搜索不可用就**说出来**，不静默只给精确匹配、让人以为这就是全部（红线 3）
+    const d = document.createElement("div");
+    d.className = "navNote warn";
+    d.textContent = r.upstream === "down"
+      ? "相关性搜索不可用：InnoSpark 没在跑。上面只有精确匹配。"
+      : "相关性搜索不可用：检索索引读不到。上面只有精确匹配。";
+    nav.append(d);
+  } else if (r.related.length) {
+    const h = document.createElement("div");
+    h.className = "navSec";
+    h.innerHTML = `相关 <span class="n">${r.related.length}</span>`;
+    nav.append(h);
+    for (const x of r.related) row(x, x.via?.includes("lexical") ? "词面" : "图", "dim");
+  }
+
+  if (!r.exact.length && !r.related.length && r.upstream === "ok") {
+    const d = document.createElement("div");
+    d.className = "navNote"; d.textContent = "没有找到。";
+    nav.append(d);
+  }
+}
+
 function drawNav() {
   const nav = $("nav");
   const w = S.catalog.wiki;
@@ -672,7 +813,37 @@ function drawNav() {
   add.innerHTML = `<span style="font-size:.95rem;line-height:1">＋</span>从资料生成新页`;
   add.onclick = openGen;
   nav.append(add);
+
+  // 搜索框
+  const sb = document.createElement("input");
+  sb.className = "navSearch"; sb.type = "search";
+  sb.placeholder = "搜标题、标签、正文…";
+  sb.value = S.q;
+  sb.oninput = () => queueSearch(sb.value);
+  nav.append(sb);
+
+  if (S.q.trim()) { drawSearchResults(nav); return; }
+
+  // 类型过滤药丸。侧边栏本来就按类型分组，过滤就是只显示一组
+  const pills = document.createElement("div");
+  pills.className = "pills";
+  const mk = (id, label, n) => {
+    const b = document.createElement("button");
+    b.type = "button";
+    b.className = "pill" + (S.typeFilter === id ? " on" : "");
+    b.textContent = n === null ? label : `${label} ${n}`;
+    b.onclick = () => { S.typeFilter = S.typeFilter === id ? null : id; drawNav(); };
+    pills.append(b);
+  };
+  mk(null, "全部", S.catalog.pages.length);
   for (const [type, label] of Object.entries(TYPE_LABEL)) {
+    const n = S.catalog.pages.filter((p) => p.type === type).length;
+    if (n) mk(type, label, n);
+  }
+  nav.append(pills);
+
+  for (const [type, label] of Object.entries(TYPE_LABEL)) {
+    if (S.typeFilter && S.typeFilter !== type) continue;
     const items = S.catalog.pages.filter((p) => p.type === type);
     if (!items.length) continue;
     const closed = S.collapsed.has(type);
@@ -811,6 +982,7 @@ function drawSide() {
   side.append(section("标签", S.tags, (t) => { S.tags = S.tags.filter((x) => x !== t); touch(); }, "tag"));
   side.append(section("相关知识", S.links, (t) => { S.links = S.links.filter((x) => x !== t); touch(); }, "link",
     S.page?.bodyLinks ?? []));
+  side.append(backlinkSection());
 
   const bar = document.createElement("div");
   bar.className = "bar";
@@ -819,12 +991,91 @@ function drawSide() {
   save.onclick = doSave;
   const view = document.createElement("button");
   view.className = "ghost"; view.textContent = "看源码"; view.onclick = showSource;
+  const del = document.createElement("button");
+  del.className = "ghost danger"; del.textContent = "删除此页"; del.onclick = confirmDelete;
   const flash = document.createElement("span");
   flash.className = "flash"; flash.id = "flash";
-  bar.append(save, view, flash);
+  bar.append(save, view, del, flash);
   side.append(bar);
 
   side.append(graphPanel());
+}
+
+/**
+ * 被以下页面引用（U-F①）。
+ *
+ * **只读**，而且必须标出来：这些链接是**别的页**写的，
+ * 不该在这里删（ADR-V2-021 的分区所有权）。
+ *
+ * 它也不是存出来的——§11 取消了双向落盘，正文 wikilink 只写发起的那一边，
+ * 这个列表是从图的边上算出来的。没有它，取消双向存储就等于让关联消失一半。
+ */
+function backlinkSection() {
+  const box = document.createElement("div");
+  box.className = "sec";
+  const backs = S.page?.backlinks ?? [];
+  box.innerHTML = `<h4>被以下页面引用 <span class="ro" ` +
+    `title="这些链接写在别的页的正文里，要改请到那一页去改">${backs.length} · 只读</span></h4>`;
+  if (!backs.length) {
+    const e = document.createElement("div");
+    e.className = "navNote"; e.textContent = "还没有别的页链向这里。";
+    box.append(e);
+    return box;
+  }
+  const wrap = document.createElement("div");
+  wrap.className = "chips";
+  for (const b of backs) {
+    const a = document.createElement("a");
+    a.href = "#"; a.className = "chip ro"; a.textContent = b.title;
+    a.title = `${b.path}（只读）`;
+    a.onclick = (e) => { e.preventDefault(); open(b.path); };
+    wrap.append(a);
+  }
+  box.append(wrap);
+  return box;
+}
+
+/**
+ * 删除。删的是用户 L2 里的真实文件，所以确认框里要把代价说全：
+ *   · 有几页链向它（删掉之后那些链接会变成橙色幻影节点）
+ *   · **只删这一个文件**，不去动别的页
+ *   · 副本进回收站
+ *
+ * 「不去动别的页」是有意的：悄悄改三个其他文件比留下幻影节点更糟。
+ * 幻影节点本来就是"如实标注未解析链接"的既有行为，用户看得见、能自己处理。
+ */
+async function confirmDelete() {
+  const p = S.page;
+  if (!p) return;
+  const backs = p.backlinks ?? [];
+  const lines = [
+    `要删除「${p.title}」吗？`,
+    ``,
+    `文件：${p.path}`,
+    ``,
+    backs.length
+      ? `有 ${backs.length} 页链向它：\n` + backs.map((b) => `  · ${b.title}`).join("\n") +
+        `\n\n删掉之后，这些页里的链接会变成橙色的幻影节点。\n` +
+        `我们**不会**去改它们 —— 悄悄改别人的正文比留下幻影更糟。`
+      : `目前没有别的页链向它。`,
+    ``,
+    `只有这一个文件会消失。原文副本会存进回收站（data/.trash/）。`,
+  ].join("\n");
+  if (!confirm(lines)) return;
+
+  const r = await fetch(`/api/page?path=${encodeURIComponent(p.path)}`, { method: "DELETE" });
+  const out = await r.json();
+  if (r.status === 503) return alert(`${out.error}\n\n副本已经存进回收站，但文件还没删掉。`);
+  if (!r.ok) return alert("删除失败：" + (out.error ?? r.status));
+
+  S.dirty = false;
+  S.catalog = await (await fetch("/api/catalog")).json();
+  S.page = null; S.tags = []; S.links = []; S.body = "";
+  const next = S.catalog.pages.find((x) => x.type === "concept") ?? S.catalog.pages[0];
+  drawNav();
+  if (next) await open(next.path); else { $("doc").innerHTML = ""; drawSide(); }
+  await loadGraph();
+  flash(`已删除。副本在回收站：${out.trashed}`, 8000);
 }
 
 function section(title, items, onRemove, kind, fromBody = []) {
@@ -918,34 +1169,125 @@ function pick(kind, value) {
 }
 function touch() { S.dirty = true; drawSide(); drawGraph(); }
 
+function flash(msg, ms = 4000) {
+  const f = $("flash");
+  if (!f) return;
+  f.textContent = msg;
+  setTimeout(() => { const g = $("flash"); if (g && g.textContent === msg) g.textContent = ""; }, ms);
+}
+
+/**
+ * 保存。带 baseRevision —— 这一页在你编辑期间可能被别人改过。
+ *
+ * 谁会改（§10.1 的威胁模型）：InnoSpark 里一次归档就会让 l2_archive 的
+ * maintainLinkedWikiPages 改写已有的 concept 页；上游 Notebook 也在编辑同一批文件；
+ * 你自己开两个标签页也算。这些都不是假想场景。
+ *
+ * 撞上了**不自动合并、也不自动覆盖**——两版都摆出来，让你自己决定。
+ */
 async function doSave() {
+  // **只发真的改了的东西。**
+  //
+  // 这一条不是优化，是正确性：服务端一旦收到 body 就会**整段替换**正文
+  // （§10.2：正文不做区间 patch）。如果只改了一个标签却顺手把正文也发过去，
+  // 那么在保存冲突里选「用我这一版覆盖」时，会连带把**别人改的正文**一起抹掉——
+  // 而用户的意图只是"留下我那个标签"。
+  //
+  // 只发改动的字段之后，改标签就只 patch frontmatter 的那几个字节，
+  // 别人动的正文原样留着。
+  const payload = { path: S.page.path, baseRevision: S.page.revisionHash };
+  const same = (a, b) => a.length === b.length && a.every((x, i) => x === b[i]);
+  if (!same(S.tags, S.page.tags)) payload.tags = S.tags;
+  if (!same(S.links, S.page.links)) payload.links = S.links;
+  if (S.body !== S.page.body) payload.body = S.body;
+  if (Object.keys(payload).length === 2) { S.dirty = false; drawSide(); return flash("没有改动"); }
+
   const r = await fetch("/api/page", {
     method: "PUT", headers: { "content-type": "application/json" },
-    body: JSON.stringify({ path: S.page.path, tags: S.tags, links: S.links, body: S.body }),
+    body: JSON.stringify(payload),
   });
   const out = await r.json();
+
+  if (r.status === 409) return showConflict(out);
+  if (r.status === 503) {
+    // 上游没在跑。如实说，不假装存下了（红线 3）
+    return alert(`${out.error}\n\n改动还在编辑器里，没有丢。把 InnoSpark 跑起来再点一次保存。`);
+  }
   if (!r.ok) return alert("保存失败：" + (out.error ?? r.status));
+
   S.dirty = false;
   S.catalog = await (await fetch("/api/catalog")).json();
   S.page = await (await fetch(`/api/page?path=${encodeURIComponent(S.page.path)}`)).json();
   S.body = S.page.body; S.tags = [...S.page.tags]; S.links = [...S.page.links];
   drawNav(); drawDoc(); drawSide();
   await loadGraph();
-  const f = $("flash");
-  if (f) {
-    f.textContent = out.reverseSynced.length ? `已写回，并反向同步到 ${out.reverseSynced.join("、")}` : "已写回 md";
-    setTimeout(() => { const g = $("flash"); if (g) g.textContent = ""; }, 4000);
-  }
+  flash(out.unchanged ? "内容没有变化，没有写盘" : "已写回 md");
 }
 
+/**
+ * 保存冲突。
+ *
+ * 刻意**不做**自动三方合并——V3 §1.4 把它列在明确不做里，而且这里也做不对：
+ * 我们没有共同祖先版本。能做的是把两版如实摆出来，由人决定。
+ */
+function showConflict(out) {
+  setHeader("srcTitle", `保存冲突 · ${S.page.path}`);
+  const mine = [
+    "======== 你这一版（还在编辑器里，没有写盘）========",
+    "", S.body.trim(),
+    S.links.length ? `\n## 相关知识\n\n${S.links.map((l) => `- [[${l}]]`).join("\n")}` : "",
+    `\n标签：${S.tags.join(", ") || "（无）"}`,
+  ].join("\n");
+  const disk = ["", "======== 磁盘上现在这一版 ========", "", out.content ?? "（拿不到）"].join("\n");
+  $("srcBody").textContent = `${out.error}\n\n${mine}\n${disk}`;
+
+  const dlg = $("src");
+  // 弹窗底部临时加两个决定按钮，关掉时撤掉
+  let bar = dlg.querySelector(".conflictBar");
+  if (bar) bar.remove();
+  bar = document.createElement("div");
+  bar.className = "pBar conflictBar";
+  const keepMine = document.createElement("button");
+  keepMine.className = "save"; keepMine.type = "button";
+  keepMine.textContent = "用我这一版覆盖";
+  keepMine.onclick = async () => {
+    // 拿磁盘当前版本当基线再存一次 —— 覆盖也必须是一次**有版本依据**的写入，
+    // 不给"无版本强写"的后门
+    S.page.revisionHash = out.revisionHash;
+    dlg.close(); bar.remove();
+    await doSave();
+  };
+  const takeDisk = document.createElement("button");
+  takeDisk.className = "ghost"; takeDisk.type = "button";
+  takeDisk.textContent = "放弃我的改动，重新读磁盘";
+  takeDisk.onclick = async () => {
+    dlg.close(); bar.remove();
+    S.dirty = false;
+    await open(S.page.path);
+    flash("已重新读取磁盘上的版本");
+  };
+  const note = document.createElement("span");
+  note.className = "pMeta";
+  note.textContent = "不会自动合并 —— 两版都在上面，你来定";
+  bar.append(keepMine, takeDisk, note);
+  $("srcBody").after(bar);
+  dlg.showModal();
+}
+
+/**
+ * 看磁盘上的真实文件。
+ *
+ * 原先这里是拿解析后的字段**重新拼**一份出来的，标题却写着「磁盘上的真实文件」——
+ * 那是名不副实（红线 3）：拼出来的东西正好看不见我们最该让用户看见的东西
+ * （比如某次保存是不是真的只动了那几个字节）。现在拿原始字节。
+ */
 async function showSource() {
-  const p = await (await fetch(`/api/page?path=${encodeURIComponent(S.page.path)}`)).json();
-  const lines = ["---", `title: ${p.title}`, `type: ${p.type}`, `tags: [${p.tags.join(", ")}]`,
-    `updated: ${p.updated}`, "---", "", p.body.trim()];
-  if (p.links.length) lines.push("", "## 相关知识", "", ...p.links.map((l) => `- [[${l}]]`));
-  setHeader("srcTitle", `磁盘上的真实文件 · ${p.path}`);
-  $("srcBody").textContent = lines.join("\n");
-  $("src").showModal();
+  const p = await (await fetch(`/api/page?path=${encodeURIComponent(S.page.path)}&raw=1`)).json();
+  const dlg = $("src");
+  dlg.querySelector(".conflictBar")?.remove();
+  setHeader("srcTitle", `磁盘上的真实文件 · ${p.path} · ${p.bytes} 字节`);
+  $("srcBody").textContent = p.raw ?? "（读不到）";
+  dlg.showModal();
 }
 $("src").onclick = (e) => { if (e.target.id === "src") $("src").close(); };
 
@@ -1205,10 +1547,17 @@ async function runCompile() {
   } finally { G.busy = false; drawGen(); }
 }
 
+/**
+ * 落盘。
+ *
+ * 归档要几秒到十几秒（上游要跑两次模型），所以它是**后台任务**：
+ * 点完立刻关掉弹窗，期间你可以照常翻别的页，进度显示在右下角（§4）。
+ * 不用「保存中…」的模态框把人糊住——那正好打在这个产品最贵的成本上（0.5：等待时间）。
+ */
 async function saveGenerated() {
   const facts = G.draft.facts.filter((f) => anchored(f) && G.picked.has(f.index))
     .map((f) => ({ text: f.text, quote: f.quote }));
-  if (!facts.length) { G.error = "至少要留一条通过核对的内容"; return drawGen(); }
+  if (!facts.length) { G.error = "至少要留一条定位到出处的内容"; return drawGen(); }
   G.busy = true; G.error = null; drawGen();
   try {
     const r = await fetch("/api/page/create", {
@@ -1219,14 +1568,59 @@ async function saveGenerated() {
       }),
     });
     const out = await r.json();
+    // 到这里为止服务端只做了校验（冻结对账 + 引文定位），一个字节都还没写。
+    // 被拒的话是同步的 4xx，原因如实带回来。
     if (!r.ok || !out.ok) throw new Error(out.error ?? `HTTP ${r.status}`);
     $("gen").close();
-    S.catalog = await (await fetch("/api/catalog")).json();
-    drawNav(); await loadGraph();
-    await open(out.path);
+    watchTask(out.taskId, G.draft.title);
   } catch (err) {
     G.error = String(err.message ?? err);
   } finally { G.busy = false; drawGen(); }
+}
+
+/** 右下角那个不打扰的进行中状态。归档期间界面照常可用。 */
+function taskBox() {
+  let el = $("taskNote");
+  if (!el) {
+    el = document.createElement("div");
+    el.id = "taskNote"; el.className = "taskNote";
+    el.style.cssText = "position:fixed;right:1rem;bottom:1rem;z-index:50;max-width:22rem";
+    document.body.append(el);
+  }
+  return el;
+}
+
+async function watchTask(taskId, title) {
+  const box = taskBox();
+  box.className = "taskNote";
+  box.textContent = `正在归档「${title}」…`;
+  const deadline = Date.now() + 300_000;
+  while (Date.now() < deadline) {
+    await new Promise((r) => setTimeout(r, 1000));
+    let t;
+    try {
+      t = await (await fetch(`/api/task?id=${encodeURIComponent(taskId)}`)).json();
+    } catch {
+      continue;   // 网络抖一下不算失败，接着轮询
+    }
+    if (t.state === "running") { box.textContent = `${t.step || "处理中…"}（「${title}」）`; continue; }
+
+    if (t.state === "done") {
+      box.textContent = `已归档：${title}`;
+      setTimeout(() => box.remove(), 6000);
+      S.catalog = await (await fetch("/api/catalog")).json();
+      drawNav(); await loadGraph();
+      await open(t.result.path);
+      return;
+    }
+    // 失败要给出**可读的原因**，不吞（§4 完成定义）
+    box.className = "taskNote bad";
+    box.textContent = `归档失败：${t.error ?? "未知原因"}`;
+    box.title = t.detail ?? "";
+    return;
+  }
+  box.className = "taskNote bad";
+  box.textContent = `归档超时：${title}。到 InnoSpark 那边看看它是不是还在跑。`;
 }
 
 function drawGen() {

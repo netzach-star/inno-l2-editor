@@ -99,8 +99,22 @@ const entry = manLines.map((l) => JSON.parse(l)).find((e) => e.id === srcId);
 ok("副作用① 这条 manifest 的 status 是 indexed", entry?.status === "indexed");
 
 // ② index.md
-const idxAfter = (await readTxt(join(WIKI, "index.md"))).split("\n").filter((l) => l.startsWith("- ")).length;
-ok("副作用② index.md 条目变多了", idxAfter > idxBefore, `${idxBefore} → ${idxAfter}`);
+//
+// 刻意**不**断言"条目数变多了"。rebuildIndex 是扫盘全量重建的，它在收进新页的同时
+// 也会把先前删掉的页从索引里清出去——净变化完全可能是 0 甚至负数，
+// 而那正是 §4 自愈表描述的正确行为。按条目数断言会得到一个时灵时不灵的测试。
+//
+// 该断言的是两件事：新页进去了，而且 index.md 和磁盘对得上（零漂移）。
+const idxText = await readTxt(join(WIKI, "index.md"));
+ok("副作用② index.md 收进了刚归档的页", idxText.includes(srcPage), `index 里没有 ${srcPage}`);
+{
+	const listed = [...idxText.matchAll(/`(wiki\/[^`]+\.md)`/g)].map((m) => m[1]);
+	const missing = [];
+	for (const rel of listed) if ((await size(join(L2, rel))) < 0) missing.push(rel);
+	ok("副作用② index.md 里没有指向已删文件的条目（零漂移）", missing.length === 0,
+		`指向不存在的文件：${missing.join(", ")}`);
+}
+void idxBefore;
 
 // ③ BM25
 const s1 = await api(UP, "POST", "/api/l2/search", { query: MARKER, limit: 10 });
@@ -188,6 +202,43 @@ ok("只改标签 → updated 与上游同形（不带引号）", /\nupdated: \d{
 // 裁定四：编辑保存后 rebuildIndex 与 appendLog 都不补
 ok("裁定四 · 编辑后 log.md 字节数不变（没补 appendLog）", (await size(join(WIKI, "log.md"))) === logB);
 ok("裁定四 · 编辑后 index.md 逐字节不变（没补 rebuildIndex）", (await readTxt(join(WIKI, "index.md"))) === idxB);
+
+/* ---------------- 5b. 只发改动的字段：别人改的正文不该被顺手抹掉 ---------------- */
+
+console.log("\n  ── 只改标签时不碰正文（§10.2 的要害）──\n");
+{
+	// 场景：用户打开一页只改了个标签，期间 l2_archive 改写了这一页的正文。
+	// 用户点保存 → 409 → 他选「用我这一版覆盖」。
+	// 这时**只有他改的标签该覆盖，别人改的正文必须活下来**——
+	// 他的意图是"留下我那个标签"，不是"把这一页退回我打开它时的样子"。
+	const cur = await api(PLUGIN, "GET", `/api/page?path=${enc}`);
+	const MARK2 = `第三方加的段落${stamp}`;
+	// 第三方（模拟 l2_archive）改正文
+	const onDisk = await readTxt(conceptAbs);
+	const ext = await api(UP, "PUT", "/api/l2/page", {
+		path: conceptPath,
+		content: `${onDisk.trimEnd()}\n\n## 别人加的\n\n${MARK2}\n`,
+		baseRevision: sha(await readBytes(conceptAbs)),
+	});
+	ok("第三方成功改了正文", ext.status === 200);
+
+	// 用户拿**过期的** baseRevision 只提交标签
+	const stale2 = await api(PLUGIN, "PUT", "/api/page", {
+		path: conceptPath, baseRevision: cur.data.revisionHash, tags: ["全流程测试", "只改标签"],
+	});
+	ok("过期版本被 409 拦下", stale2.status === 409);
+
+	// 用户选「用我这一版覆盖」：拿磁盘现状当基线重发，**仍然只发 tags**
+	const forced = await api(PLUGIN, "PUT", "/api/page", {
+		path: conceptPath, baseRevision: stale2.data.revisionHash, tags: ["全流程测试", "只改标签"],
+	});
+	ok("以磁盘现状为基线重存成功", forced.status === 200, forced.data?.error);
+
+	const final = await readTxt(conceptAbs);
+	ok("用户的标签写进去了", /tags: \[全流程测试, 只改标签\]/.test(final));
+	ok("**第三方改的正文活下来了**（没被顺手抹掉）", final.includes(MARK2),
+		"只改标签却把 body 一起发过去，就会出现这个数据丢失");
+}
 
 /* ---------------- 6. 单边存储（§11 / U-K） ---------------- */
 
