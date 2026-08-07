@@ -56,6 +56,7 @@ const paths = {
 	newPanel: join(WEB, "react", "StagingArea.tsx"),
 	// v2.0 新增：后端
 	server: join(SRC, "server.ts"),
+	wikiLinker: join(SRC, "memory", "l2", "wiki-linker.ts"),
 	newRoutes: join(SRC, "memory", "l2", "l2-editor-routes.ts"),
 };
 
@@ -66,7 +67,7 @@ const exists = async (p) => { try { await stat(p); return true; } catch { return
 if (!(await exists(join(TARGET, "package.json")))) {
 	die(`${TARGET} 里没有 package.json`, "第一个参数要指向 InnoSpark 的安装目录（有 restart-dev.sh 的那一层）");
 }
-for (const key of ["appStore", "workspacePanel", "chatCenter", "zh", "en", "server"]) {
+for (const key of ["appStore", "workspacePanel", "chatCenter", "zh", "en", "server", "wikiLinker"]) {
 	if (!(await exists(paths[key]))) {
 		die(`找不到 ${paths[key]}`, "这看起来不像 InnoSpark 的代码结构，确认目录是否正确");
 	}
@@ -162,7 +163,17 @@ function MessageBubble({ message, question, showChannel }: { message: ChatMessag
 		`<MessageBubble message={message} showChannel={multiChannel} />`,
 		`<MessageBubble message={message} question={findQuestionFor(chat.messages, index)} showChannel={multiChannel} />`],
 
-	// ── v2.0 后端：只有这两条锚点，实现全在新增的 l2-editor-routes.ts 里 ──
+	// ── v2.0 后端：三条锚点，实现全在新增的 l2-editor-routes.ts 里 ──
+
+	// 只加一个 export 关键字，零语义变化。
+	// 为什么值得单开一个锚点：建 concept 页要算文件名，而文件名规则是上游的
+	// slugifyTitle。在转发里抄一份必然漂移（0.6 的判据：输出必须和上游逐字节可比
+	// 就说明入口找错了），而这里的正确入口就是那个函数本身——它只是没导出。
+	// 加 export 是能消掉这一整类漂移的最小改动。
+	[paths.wikiLinker,
+		`function slugifyTitle(title: string): string {`,
+		`export function slugifyTitle(title: string): string {`],
+
 	[paths.server,
 		`import { buildWikiGraph } from "./memory/l2/wiki-graph.js";`,
 		`import { buildWikiGraph } from "./memory/l2/wiki-graph.js";\nimport { handleL2EditorRoute } from "./memory/l2/l2-editor-routes.js";`],

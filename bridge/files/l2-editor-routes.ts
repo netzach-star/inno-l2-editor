@@ -10,9 +10,18 @@
 //   「如果你写的代码，输出必须和上游『逐字节可比』，那就是入口找错了。」
 // 下面没有一处在拼 index.md / log.md / manifest 的格式。
 //
-//   POST /api/l2/archive   把 l2_archive 工具暴露成 HTTP（五个副作用它全包）
-//   POST /api/l2/search    把 L2Memory.search 暴露成 HTTP（BM25 + 一跳图扩展）
-//   PUT  /api/l2/page      读盘比对 baseRevision → writeText → indexPageByPath
+//   POST /api/l2/archive        把 l2_archive 工具暴露成 HTTP（五个副作用它全包）
+//   POST /api/l2/search         把 L2Memory.search 暴露成 HTTP（BM25 + 一跳图扩展）
+//   PUT  /api/l2/page           读盘比对 baseRevision → writeText → indexPageByPath
+//   POST /api/l2/page/concept   把**用户逐条核对过的**草稿落成 concept / entity 页
+//
+// 第四条为什么存在（这一条设计文档里没有，是施工时实测发现的缺口）：
+// `l2_archive` 内部会对传入的 content 再跑一次 `summarizeContent`，
+// **落盘的是模型重写的版本，而不是用户逐条勾选核对过的那一份**（原文只进 raw/ 与
+// extracted/）。也就是说引文闸门把守住了，但守住的东西在最后一步又被模型改了一遍——
+// 那正好把本项目的立项理由（"这条到底是不是它编的"）冲掉。
+// 所以拆成两步：`l2_archive` 负责归档**资料**（它本来就是干这个的，五个副作用全包），
+// 这一条负责把**用户批准的正文**落成页面。
 //
 // 为什么 PUT 不用上游现成的 `PUT /api/wiki/page`：那条只收 {path, content}，
 // 没有版本参数、不做任何检查。而"插件先 GET 算 hash → 比对 → 再调上游 PUT"
@@ -22,12 +31,23 @@
 // 上游自己的 `PUT /api/wiki/page` 一个字节不动，Notebook 继续用它。
 
 import { createHash, randomUUID } from "node:crypto";
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync } from "node:fs";
 import type { IncomingMessage, ServerResponse } from "node:http";
+import { join } from "node:path";
 
 import { createL2Tools } from "./l2-tools.js";
 import { getL2Memory } from "./l2-memory.js";
-import { writeText } from "../../storage/file-store.js";
+import { slugifyTitle } from "./wiki-linker.js";
+import {
+	appendLog,
+	ensureL2Directories,
+	parseFrontmatter,
+	rebuildIndex,
+	serializeFrontmatter,
+} from "./wiki-maintainer.js";
+import { readManifest } from "./manifest-store.js";
+import { readText, writeText } from "../../storage/file-store.js";
+import type { ManifestEntry, WikiPageFrontmatter } from "./types.js";
 
 /** 上游 server.ts 里已有的那几个局部工具，由调用方注入，避免再开锚点去导出它们。 */
 export interface L2EditorRouteDeps {
@@ -88,6 +108,73 @@ function forwardContext(deps: L2EditorRouteDeps): never | Record<string, unknown
 }
 
 const ARCHIVE_SOURCE_TYPES = new Set(["text", "markdown", "conversation", "pdf", "word", "image"]);
+
+/**
+ * 找这个标题**已经**落在哪个文件上。
+ *
+ * 口径照抄上游 `findExistingPage`（`wiki-linker.ts:193`）的先后顺序：
+ * 先按 slug 猜路径，猜不中再扫目录、比对 frontmatter 的 title。
+ * 之所以要扫，是因为同一个标题可能被写在别的文件名下（改过名、或早期建的）。
+ */
+function locatePage(l2DataDir: string, title: string, type: "concept" | "entity"): { path: string; exists: boolean } {
+	const dir = type === "entity" ? "entities" : "concepts";
+	const slugPath = `wiki/${dir}/${slugifyTitle(title)}.md`;
+	if (existsSync(join(l2DataDir, slugPath))) return { path: slugPath, exists: true };
+
+	const absDir = join(l2DataDir, "wiki", dir);
+	if (existsSync(absDir)) {
+		for (const file of readdirSync(absDir)) {
+			if (!file.endsWith(".md")) continue;
+			const rel = `wiki/${dir}/${file}`;
+			const { frontmatter } = parseFrontmatter(readText(join(l2DataDir, rel)));
+			if ((frontmatter?.title ?? "") === title) return { path: rel, exists: true };
+		}
+	}
+	return { path: slugPath, exists: false };
+}
+
+/** 去重保序合并，上限 12 —— 与上游 `mergeTags`（`wiki-linker.ts:211`）同口径。 */
+function mergeTags(...groups: string[][]): string[] {
+	const seen = new Set<string>();
+	const out: string[] = [];
+	for (const g of groups) {
+		for (const t of g) {
+			const s = t.trim();
+			if (!s || seen.has(s)) continue;
+			seen.add(s);
+			out.push(s);
+		}
+	}
+	return out.slice(0, 12);
+}
+
+/**
+ * 把一个 wiki 路径登记进某条 manifest 条目的 `wikiPages`。
+ *
+ * 上游没导出"往条目里加一条"的函数，只导出了反向的
+ * `removeWikiPathFromManifest`。这里就是它的镜像写法——同样是
+ * 「readManifest → 改内存里的对象 → JSON.stringify 整个写回」，
+ * 序列化的是**上游自己读出来的对象**，不是我们发明的格式。
+ *
+ * 不登记的话，manifest 就不知道这一页属于哪份资料——那正是 §4 说的
+ * "manifest 是唯一永久失配的"那个洞，而这一页恰恰是用户最在乎的那一页。
+ */
+function addWikiPathToManifest(l2DataDir: string, sourceId: string, wikiPath: string): boolean {
+	const entries = readManifest(l2DataDir);
+	let changed = false;
+	for (const entry of entries as ManifestEntry[]) {
+		if (entry.id !== sourceId) continue;
+		if (!entry.wikiPages.includes(wikiPath)) {
+			entry.wikiPages.push(wikiPath);
+			entry.updatedAt = new Date().toISOString();
+			changed = true;
+		}
+	}
+	if (changed) {
+		writeText(join(l2DataDir, "manifest.jsonl"), `${entries.map((e) => JSON.stringify(e)).join("\n")}\n`);
+	}
+	return changed;
+}
 
 /**
  * 处理三条 /api/l2/* 路由。命中并已响应返回 true，未命中返回 false 让上游继续往下匹配。
@@ -204,6 +291,123 @@ export async function handleL2EditorRoute(
 			return true;
 		}
 		json(res, 200, { results });
+		return true;
+	}
+
+	/* ---------------- POST /api/l2/page/concept ---------------- */
+	if (method === "POST" && url === "/api/l2/page/concept") {
+		if (!deps.isL2Enabled()) {
+			json(res, 409, { error: "L2 Wiki 知识库已在设置中关闭，当前不写入。" });
+			return true;
+		}
+		let body: Record<string, unknown>;
+		try {
+			body = (await readBody(req)) as Record<string, unknown>;
+		} catch {
+			json(res, 400, { error: "Invalid JSON body" });
+			return true;
+		}
+
+		const title = typeof body.title === "string" ? body.title.trim() : "";
+		const pageBody = typeof body.body === "string" ? body.body : "";
+		const type = body.type === "entity" ? "entity" : "concept";
+		const tags = Array.isArray(body.tags) ? body.tags.map(String) : [];
+		const sourceId = typeof body.sourceId === "string" ? body.sourceId : "";
+		const sourcePagePath = typeof body.sourcePagePath === "string" ? body.sourcePagePath : "";
+		// 覆盖必须是调用方的**显式动作**，路由本身不预设策略。
+		// （插件默认传 true —— 人类 2026-08-07 裁定：撞名时用用户批准的版本覆盖。）
+		const overwrite = body.overwrite === true;
+
+		if (!title) {
+			json(res, 400, { error: "Missing title" });
+			return true;
+		}
+		if (!pageBody.trim()) {
+			json(res, 400, { error: "Missing body" });
+			return true;
+		}
+
+		ensureL2Directories(l2DataDir);
+		const located = locatePage(l2DataDir, title, type);
+		const fullPath = safeJoin(l2DataDir, located.path);
+		if (!fullPath) {
+			json(res, 400, { error: "Invalid wiki path" });
+			return true;
+		}
+
+		const today = new Date().toISOString().slice(0, 10);
+		let fm: WikiPageFrontmatter;
+
+		if (located.exists) {
+			if (!overwrite) {
+				// 复用 §10.1 那套 409：两版都不静默丢失，交给用户决定
+				json(res, 409, {
+					error: "已经有一页叫这个标题了",
+					exists: true,
+					path: located.path,
+					content: readFileSync(fullPath, "utf-8"),
+					revisionHash: revisionOf(fullPath),
+				});
+				return true;
+			}
+			// 覆盖的是**正文**。frontmatter 里 created / status / confidence /
+			// contested / contradictions 是页面自己的历史，不该被一次覆盖抹掉；
+			// tags 与来源做并集——这一页现在确实同时属于新旧两份资料。
+			const prev = parseFrontmatter(readText(fullPath)).frontmatter;
+			fm = {
+				...(prev ?? {}),
+				title,
+				created: prev?.created || today,
+				type,
+				tags: mergeTags([type], prev?.tags ?? [], tags),
+				sources: mergeTags(prev?.sources ?? [], sourcePagePath ? [sourcePagePath] : []),
+				source_ids: mergeTags(prev?.source_ids ?? [], sourceId ? [sourceId] : []),
+				updated: today,
+				status: prev?.status || "draft",
+				confidence: prev?.confidence || "medium",
+			} as WikiPageFrontmatter;
+		} else {
+			fm = {
+				title,
+				created: today,
+				type,
+				tags: mergeTags([type], tags),
+				sources: sourcePagePath ? [sourcePagePath] : [],
+				source_ids: sourceId ? [sourceId] : [],
+				updated: today,
+				status: "draft",
+				confidence: "medium",
+			} as WikiPageFrontmatter;
+		}
+
+		// frontmatter 由**上游自己的序列化器**生成，我们一个字段都不手拼——
+		// 手拼就等于复现产物格式，必然漂移（0.6）。正文是用户的内容，不是格式。
+		writeText(fullPath, `${serializeFrontmatter(fm)}\n${pageBody.trimEnd()}\n`);
+
+		if (sourceId) addWikiPathToManifest(l2DataDir, sourceId, located.path);
+		// 建页要补 rebuildIndex 与 appendLog —— 上游 l2_archive 建页时也补。
+		// 裁定四说的"不补"只管**编辑**（上游 Notebook 编辑就不补），这里是建页。
+		rebuildIndex(l2DataDir, readManifest(l2DataDir));
+		await getL2Memory(l2DataDir).indexPageByPath(located.path);
+		appendLog(
+			l2DataDir,
+			located.exists ? "update" : "create",
+			title,
+			[
+				`- 页面: ${located.path}`,
+				`- 类型: ${type}`,
+				`- 来源: ${sourceId || "（未关联）"}`,
+				"- 由 L2 结构化编辑器写入（内容经用户逐条复核）",
+			].join("\n"),
+		);
+
+		json(res, 200, {
+			ok: true,
+			path: located.path,
+			created: !located.exists,
+			overwritten: located.exists,
+			revisionHash: revisionOf(fullPath),
+		});
 		return true;
 	}
 
