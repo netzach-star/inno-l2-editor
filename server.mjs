@@ -444,7 +444,7 @@ function applyCors(req, res) {
 		res.setHeader("access-control-allow-origin", origin);
 		res.setHeader("vary", "origin");
 		res.setHeader("access-control-allow-headers", "content-type");
-		res.setHeader("access-control-allow-methods", "GET,POST,PUT,OPTIONS");
+		res.setHeader("access-control-allow-methods", "GET,POST,PUT,DELETE,OPTIONS");
 	}
 }
 
@@ -670,6 +670,127 @@ const server = createServer(async (req, res) => {
 			// 刻意**没有** reverseSynced —— 对端写入已按 §11 拆掉。
 			// 关联只存发起的那一边，反向链接由 GET /api/page 的 backlinks 查询得出。
 			return json(res, 200, { ok: true, revisionHash: up.data?.revisionHash ?? "" });
+		}
+
+		/* ---------------- U-E：搜索 / 删除 ---------------- */
+
+		// 搜索 = 上游 BM25（相关性）+ 插件侧精确匹配（置顶），**两类分开标注**。
+		//
+		// 为什么要加后半截（执行决议 D-12，实测）：上游 searchL2 把 CJK 按 bigram 切开
+		// 再 OR 连接，「数学」这类高频片段会让大量页面成为候选，叠上一跳图扩展的加权之后，
+		// **真正精确命中的那一页会被埋很深**——实测全库唯一含「法国数学家」的页排到第 6/8，
+		// 而原始 FTS 里它排第 1。照原样透出，§5「搜索能按标题、标签、正文三者找到页」
+		// 就只是字面达成。
+		//
+		// 但精确匹配是**补充**不是替代：两类结果在响应里分开标注（exact / related），
+		// 界面上也分开显示。不混成一锅，用户才知道自己看到的是什么。
+		if (req.method === "GET" && url.pathname === "/api/search") {
+			const q = (url.searchParams.get("q") ?? "").trim();
+			if (!q) return json(res, 200, { exact: [], related: [], upstream: "ok" });
+
+			// ── 精确匹配：标题 / 标签 / 正文的原样子串 ──
+			const pages = (await buildCatalog()).pages;
+			const needle = q.toLowerCase();
+			const exact = [];
+			for (const p of pages) {
+				const raw = await readFile(safePath(p.path), "utf8").catch(() => "");
+				const { body } = splitFrontmatter(raw);
+				const inTitle = p.title.toLowerCase().includes(needle);
+				const inTag = p.tags.some((t) => t.toLowerCase().includes(needle));
+				const at = body.toLowerCase().indexOf(needle);
+				if (!inTitle && !inTag && at === -1) continue;
+				exact.push({
+					path: p.path,
+					title: p.title,
+					type: p.type,
+					where: inTitle ? "title" : inTag ? "tag" : "body",
+					// 正文命中给一小段上下文，让用户不点进去也知道命中在什么语境
+					context: at === -1 ? "" : body.slice(Math.max(0, at - 30), at + needle.length + 40).replace(/\s+/g, " ").trim(),
+				});
+			}
+
+			// ── 相关性：上游 BM25 + 一跳图扩展 ──
+			let related = [];
+			let upstream = "ok";
+			try {
+				const up = await callUpstream("POST", "/api/l2/search", { query: q, limit: 20 });
+				if (up.status === 200) {
+					const seen = new Set(exact.map((e) => e.path));
+					related = (up.data?.results ?? []).filter((r) => !seen.has(r.path));
+				} else {
+					upstream = up.status === 503 ? "index_unavailable" : "error";
+				}
+			} catch (err) {
+				// 上游没在跑：**如实说**，不假装相关性搜索也跑过了（红线 3）。
+				// 精确匹配那半截仍然给，但界面必须标明现在只有它。
+				upstream = err.reason === "upstream_down" ? "down" : "error";
+			}
+			return json(res, 200, { exact, related, upstream });
+		}
+
+		// 删除。删的是用户 L2 里的真实文件，所以：
+		//   ① 先把原始字节抄进插件侧的回收站（D-03，人类裁定要做）
+		//   ② 再调上游 DELETE —— 它自己会 rmSync + 清 manifest + 清检索索引
+		//      （server.ts:3269-3272），我们**一行删文件的代码都不写**
+		//   ③ 只删那一个文件，不去动别的页。入链会变成橙色幻影节点，
+		//      那本来就是"如实标注未解析链接"的既有行为，用户看得见、能自己处理。
+		//      悄悄改三个其他文件比留下幻影节点更糟。
+		if (req.method === "DELETE" && url.pathname === "/api/page") {
+			const rel = url.searchParams.get("path");
+			const abs = safePath(rel);
+			if (!abs) return json(res, 400, { error: "非法路径" });
+
+			let bytes;
+			try {
+				bytes = await readFile(abs);
+			} catch {
+				return json(res, 404, { error: "这一页不存在" });
+			}
+
+			// ① 回收站副本。落在插件自己的 data/.trash/ 下——上游 rebuildIndex 是扫盘的，
+			// 副本只要进了它的扫描范围就会被当成正常页收回索引（D-03）。
+			const stampName = `${new Date().toISOString().replace(/[:.]/g, "-")}__${rel.replace(/[\\/]/g, "%")}`;
+			await mkdir(TRASH, { recursive: true });
+			await writeFile(join(TRASH, stampName), bytes);
+
+			// ② 交给上游删
+			let up;
+			try {
+				up = await callUpstream("DELETE", `/api/wiki/page?path=${encodeURIComponent(rel)}`);
+			} catch (err) {
+				return json(res, 503, {
+					ok: false,
+					reason: err.reason ?? "upstream_error",
+					error: `删除不可用：${err.message}`,
+					trashed: stampName,
+				});
+			}
+			if (up.status !== 200) {
+				return json(res, 502, { ok: false, error: up.data?.error ?? `上游返回 ${up.status}`, trashed: stampName });
+			}
+			return json(res, 200, { ok: true, path: rel, trashed: stampName });
+		}
+
+		// 回收站清单。恢复不做成一键——恢复等于建页，得走归档那条链路；
+		// 这里如实告诉用户副本在哪、怎么拿回去（README 里写了）。
+		if (req.method === "GET" && url.pathname === "/api/trash") {
+			let names = [];
+			try {
+				names = (await readdir(TRASH)).filter((n) => n.endsWith(".md") || n.includes("%"));
+			} catch { /* 还没删过任何东西 */ }
+			const items = [];
+			for (const n of names) {
+				const st = await stat(join(TRASH, n)).catch(() => null);
+				const at = n.slice(0, n.indexOf("__"));
+				items.push({
+					file: n,
+					originalPath: n.slice(n.indexOf("__") + 2).replace(/%/g, "/"),
+					deletedAt: at,
+					size: st?.size ?? 0,
+				});
+			}
+			items.sort((a, b) => b.deletedAt.localeCompare(a.deletedAt));
+			return json(res, 200, { dir: TRASH, items });
 		}
 
 		// 模型是否可用 + 配置从哪来 + 有哪些模型可选。
