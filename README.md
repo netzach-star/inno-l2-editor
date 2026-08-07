@@ -95,14 +95,27 @@ cd /path/to/inno-agent && ./restart-dev.sh restart --mode prod
 
 ## 核验
 
+**不需要 API key、不需要跑任何服务：**
+
 ```bash
-node check-citation.mjs    # 25 项：引文校验与来源冻结
-node check-isolation.mjs   #  6 项：子代理隔离
-node check-pipeline.mjs    # 27 项：写盘边界（需先启动 server.mjs）
+node check-citation.mjs      # 35 项：引文定位与来源冻结
+node check-frontmatter.mjs   # 40 项：frontmatter 的字节区间写回
+node check-isolation.mjs     #  6 项：子代理隔离
+node check-upstream.mjs ../inno-agent   # 抗漂移：锚点还在不在、转发还编不编得过
 ```
 
-都不需要 API key。钉住四条：模型没有正式写权限；引文必须是冻结来源的精确子串；
-界面可以撒谎、服务端不信（写盘那侧重新核对）；冻结对账在引文校验**之前**。
+**需要一个在跑的 InnoSpark（会真的写知识库、真的调模型）：**
+
+```bash
+node check-pipeline.mjs      # 32 项：写盘边界
+INNO_AGENT_DIR=<inno-agent 目录> node check-flow.mjs   # 44 项：真实全流程
+node check-upstream.mjs ../inno-agent --full           # 加测端点契约与卸载干净
+```
+
+钉住的东西：模型没有正式写权限；引文必须能在冻结来源里定位到；界面可以撒谎、
+服务端不信（写盘那侧重新定位）；冻结对账在引文定位**之前**；
+只改标签时正文**逐字节**不变；在 A 页加关联只写 A 一个文件；
+编辑保存后 `log.md` 与 `index.md` 一个字节都不动。
 
 ## 环境变量
 
@@ -123,9 +136,10 @@ node check-pipeline.mjs    # 27 项：写盘边界（需先启动 server.mjs）
 | `server.mjs` | HTTP、md 读写、链接解析、图谱构建 |
 | `index.html` | 全部前端（无框架、无构建） |
 | `polish-agent.mjs` | 子代理：隔离会话、润色、从来源编译 |
-| `citation.mjs` | 引文校验 |
+| `citation.mjs` | 引文定位 |
+| `frontmatter.mjs` | frontmatter 的字节区间读写（只动托管字段） |
 | `source-store.mjs` | 来源冻结，内容寻址 + hash 对账 |
-| `bridge/` | 对话寄存区：装进 InnoSpark 的脚本与源码 |
+| `bridge/` | 装进 InnoSpark 的脚本与源码：寄存区 + 四条转发路由 |
 | `sample/wiki/` | 三页示例（自撰常识，不取自任何教材） |
 
 ## 和 InnoSpark 的关系
@@ -146,6 +160,41 @@ node check-pipeline.mjs    # 27 项：写盘边界（需先启动 server.mjs）
 学习路径推理、图谱画布编辑、PDF 直接解析（当前支持 `.md` / `.txt`）。
 
 数学公式不渲染 KaTeX —— InnoSpark 自带的笔记本视图渲染，这边还没补。
+
+### 已知限制（如实写在这里，不藏）
+
+**一、改标题之后 `index.md` 会短暂指着旧标题。**
+编辑保存只做 `writeText` + `indexPageByPath`，**不补** `rebuildIndex` 与 `appendLog`——
+上游自己的笔记本编辑就是这么保存的，补了反而是偏离。代价是 `index.md`（主代理每次
+`l2_query` 都会读的那份目录）会短暂过期，它会在**下一次任何归档**时由上游扫盘自愈。
+
+**二、上游没在跑的时候不能保存。**
+所有写入都转发给 InnoSpark——只有让"读盘比对 + 写入"发生在同一个进程的同一次请求里，
+乐观锁才关得死。插件自己"先算 hash 再写"只是把冲突窗口从几分钟缩到几十毫秒，没关死，
+而一条关不死的护栏被叫做乐观锁就是在骗人。所以上游没起来时如实报"保存不可用"，
+**不降级偷偷直写文件**。改动还在编辑器里，不会丢。
+
+**三、搜索的相关性排序照抄上游，可能把精确命中排得很后。**
+上游把中文按 bigram 切开再 OR 连接，「数学」这类高频片段会让大量页面成为候选。
+所以这边另做了一遍**精确子串**扫描并置顶，界面上标「精确匹配」与「相关」分开显示。
+这两类不要混着看。
+
+**四、`bridge/` 是有版本的，卸载必须用当初装它的那一版脚本。**
+锚点在版本之间会收窄或改写。拿新版脚本去卸旧版装上去的东西会失败——
+好消息是它**在写盘前就会中止**，不会留下半成品。装错版本时脚本会明确告诉你该怎么办。
+
+**五、删除不可撤销，但有回收站。**
+删除前会把原始字节抄进 `data/.trash/`（插件自己的目录，不在上游扫描范围内）。
+界面上没有一键恢复——恢复等于重新建页，得走归档那条链路。`GET /api/trash` 列清单。
+
+**六、`summary` 没有引文出处。**
+它绕开引文定位直接写进页面，所以界面上标着「AI 概括，未逐句溯源」并单独配色。
+存盘前请自己过一眼。
+
+**七、「定位」不等于「核实」。**
+引文定位能证明的只有"这段引文在冻结来源里逐字找得到"，它**不保证**这句话确实被那段
+原文支持——那是语义判断，机器做不了。所以字段叫 `anchor` 不叫 `verified`，
+界面写「已定位到出处」不写「已核验」。
 
 ## 许可
 

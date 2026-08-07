@@ -1,21 +1,21 @@
 {
-  "name": "inno-l2-editor",
-  "version": "1.1.0",
-  "private": true,
-  "type": "module",
-  "description": "给 InnoSpark L2 Wiki 补一套更好的写入体验：AI 负责整理，用户负责决定。",
-  "scripts": {
-    "start": "node server.mjs"
-  },
-  "optionalDependencies": {
-    "@earendil-works/pi-coding-agent": "^0.79.10"
-  },
-  "engines": {
-    "node": ">=22.19.0"
-  },
-  "license": "MIT",
-  "repository": {
-    "type": "git",
-    "url": "https://github.com/netzach-star/inno-l2-editor.git"
-  }
+	"name": "inno-l2-editor",
+	"version": "2.0.0-batch1",
+	"private": true,
+	"type": "module",
+	"description": "给 InnoSpark L2 Wiki 补一套更好的写入体验：AI 负责整理，用户负责决定。",
+	"scripts": {
+		"start": "node server.mjs"
+	},
+	"optionalDependencies": {
+		"@earendil-works/pi-coding-agent": "^0.79.10"
+	},
+	"engines": {
+		"node": ">=22.19.0"
+	},
+	"license": "MIT",
+	"repository": {
+		"type": "git",
+		"url": "https://github.com/netzach-star/inno-l2-editor.git"
+	}
 }
