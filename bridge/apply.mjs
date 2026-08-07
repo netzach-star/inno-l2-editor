@@ -1,18 +1,33 @@
 #!/usr/bin/env node
-// 把「对话寄存区」装进 InnoSpark 前端 / 从中卸载。
+// 把「对话寄存区」+「L2 编辑器转发路由」装进 InnoSpark / 从中卸载。
 //
 // 为什么不用 git patch：patch 按行号和上下文匹配，上游动一行就整个失败，
 // 而且报错看不出哪里不对。这里改成「按锚点字符串替换」——锚点找不到就明确
 // 告诉你是哪一处、上游可能改了什么，而不是甩一句 "patch does not apply"。
 //
 // 幂等：装过了会跳过；卸载会还原。任何一步失败都不写盘（先全算好再落地）。
+//
+// ── v2.0 加了什么（见设计文档 §4 / §10.1 / 裁定二、三）──
+//
+//   后端：apps/inno-agent/src/memory/l2/l2-editor-routes.ts   ← 整个文件是新增的
+//         server.ts 只锚 **2 处**：一个 import、一个 dispatch 调用。
+//
+// 路由实现刻意放进新文件而不是内联进 server.ts，就是为了把锚点面压到最小：
+// 锚点是这个维护模型唯一的失效点，锚得越少、越短，上游升级时越不容易断。
+// 三条路由本身全是**纯新增**，不改上游任何既有代码路径——
+// 上游自己的 `PUT /api/wiki/page` 一个字节不动，Notebook 继续用它（裁定二）。
 
 import { readFile, writeFile, mkdir, rm, stat } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
-const MARK = "staging-store.js"; // 判断是否已安装的标记
+// 判断是否已安装的标记。v2.0 换成后端那条 import——单一脚本装全部，
+// 后端那条在就说明整套都在。
+const MARK = "l2-editor-routes.js";
+// v1.1.0 的标记。用来识别「装着旧版」这种状态并给出可执行的提示，
+// 而不是让锚点对不上、甩一句看不懂的错。
+const MARK_V1 = "staging-store.js";
 
 const c = { r: "\x1b[31m", g: "\x1b[32m", y: "\x1b[33m", d: "\x1b[2m", x: "\x1b[0m" };
 const ok = (s) => console.log(`  ${c.g}✓${c.x} ${s}`);
@@ -25,10 +40,12 @@ const die = (s, hint) => {
 };
 
 const [, , rawTarget, mode = "install"] = process.argv;
-if (!rawTarget) die("用法：node apply.mjs <inno-agent 目录> [install|uninstall]");
+if (!rawTarget) die("用法：node apply.mjs <inno-agent 目录> [install|uninstall|check]");
+if (!["install", "uninstall", "check"].includes(mode)) die(`不认识的模式：${mode}`, "只能是 install / uninstall / check");
 const TARGET = rawTarget.replace(/\/+$/, "");
 
 const WEB = join(TARGET, "apps", "inno-agent", "web", "src");
+const SRC = join(TARGET, "apps", "inno-agent", "src");
 const paths = {
 	appStore: join(WEB, "stores", "app-store.ts"),
 	workspacePanel: join(WEB, "react", "WorkspacePanel.tsx"),
@@ -37,6 +54,9 @@ const paths = {
 	en: join(WEB, "i18n", "locales", "en.json"),
 	newStore: join(WEB, "stores", "staging-store.ts"),
 	newPanel: join(WEB, "react", "StagingArea.tsx"),
+	// v2.0 新增：后端
+	server: join(SRC, "server.ts"),
+	newRoutes: join(SRC, "memory", "l2", "l2-editor-routes.ts"),
 };
 
 const exists = async (p) => { try { await stat(p); return true; } catch { return false; } };
@@ -46,7 +66,7 @@ const exists = async (p) => { try { await stat(p); return true; } catch { return
 if (!(await exists(join(TARGET, "package.json")))) {
 	die(`${TARGET} 里没有 package.json`, "第一个参数要指向 InnoSpark 的安装目录（有 restart-dev.sh 的那一层）");
 }
-for (const key of ["appStore", "workspacePanel", "chatCenter", "zh", "en"]) {
+for (const key of ["appStore", "workspacePanel", "chatCenter", "zh", "en", "server"]) {
 	if (!(await exists(paths[key]))) {
 		die(`找不到 ${paths[key]}`, "这看起来不像 InnoSpark 的代码结构，确认目录是否正确");
 	}
@@ -141,6 +161,30 @@ function MessageBubble({ message, question, showChannel }: { message: ChatMessag
 	[paths.chatCenter,
 		`<MessageBubble message={message} showChannel={multiChannel} />`,
 		`<MessageBubble message={message} question={findQuestionFor(chat.messages, index)} showChannel={multiChannel} />`],
+
+	// ── v2.0 后端：只有这两条锚点，实现全在新增的 l2-editor-routes.ts 里 ──
+	[paths.server,
+		`import { buildWikiGraph } from "./memory/l2/wiki-graph.js";`,
+		`import { buildWikiGraph } from "./memory/l2/wiki-graph.js";\nimport { handleL2EditorRoute } from "./memory/l2/l2-editor-routes.js";`],
+	// 挂在 Wiki API 之前：三条 /api/l2/* 与上游任何既有路由都不重名，
+	// 先匹配后匹配都一样，放这里只是为了让它们在代码里挨着 wiki 那组。
+	[paths.server,
+		`\t\t// --- Wiki API ---`,
+		`\t\t// --- L2 编辑器转发路由（inno-l2-editor v2.0，纯新增，不碰下面任何一条）---
+\t\tif (
+\t\t\tawait handleL2EditorRoute(method, url, req, res, {
+\t\t\t\tl2DataDir,
+\t\t\t\tjson,
+\t\t\t\treadBody,
+\t\t\t\tsafeJoin,
+\t\t\t\tgetSession,
+\t\t\t\tisL2Enabled: () => config.memory?.l2Enabled !== false,
+\t\t\t})
+\t\t) {
+\t\t\treturn;
+\t\t}
+
+\t\t// --- Wiki API ---`],
 ];
 
 const I18N = {
@@ -168,10 +212,77 @@ const I18N = {
 
 /* ---------------- 执行 ---------------- */
 
-const installed = (await readFile(paths.workspacePanel, "utf8")).includes(MARK);
+// v2.0 的标记在 server.ts（后端那条 import）——单一脚本装全部，它在就说明整套都在
+const installed = (await readFile(paths.server, "utf8")).includes(MARK);
+// 只装了 v1.1.0 的那半套：前端锚点已被替换、后端还没动
+const v1Installed = (await readFile(paths.workspacePanel, "utf8")).includes(MARK_V1);
+
+/*
+ * check 模式：**不写一个字节**，只报告锚点还在不在。
+ *
+ * 这是设计文档 §13.2 的核心风险控制。锚点是这套维护模型唯一的失效点，
+ * 而历史上它是在**用户安装时**才断的（`89c2a69` → `924ccbc`，上游给消息列表
+ * 加了 data-conversation-turn 包裹层）。这个模式的用途就是让它**先在我们这边断**。
+ *
+ * 按裁定二「锚点失效就重写脚本」，这份输出直接就是重写清单：
+ * 哪几个锚点没了、在哪个文件、锚的是什么。
+ */
+if (mode === "check") {
+	console.log(`  基线状态：${installed ? "已装 v2.0" : v1Installed ? "已装 v1.1.0（v2.0 未装）" : "未安装（上游原样）"}\n`);
+	let bad = 0;
+	const cache = new Map();
+	for (const [file, anchor, replacement] of EDITS) {
+		if (!cache.has(file)) cache.set(file, await readFile(file, "utf8"));
+		const src = cache.get(file);
+		// 已装的情况下原锚点已被替换掉，该找的是替换后的片段
+		const needle = installed ? replacement : anchor;
+		const hits = src.split(needle).length - 1;
+		const where = `${file.replace(`${TARGET}/`, "")}`;
+		const brief = anchor.split("\n")[0].slice(0, 64);
+		if (hits === 1) ok(`${where}  ${c.d}${brief}${c.x}`);
+		else {
+			bad++;
+			console.error(`  ${c.r}✗${c.x} ${where}  命中 ${hits} 次（应为 1）\n      ${c.d}${brief}${c.x}`);
+		}
+	}
+	// 新增文件不占锚点，但装了之后应该在
+	if (installed) {
+		for (const p of [paths.newStore, paths.newPanel, paths.newRoutes]) {
+			if (await exists(p)) ok(`${p.replace(`${TARGET}/`, "")} 在`);
+			else { bad++; console.error(`  ${c.r}✗${c.x} ${p.replace(`${TARGET}/`, "")} 不见了`); }
+		}
+	}
+	console.log("");
+	if (bad > 0) {
+		console.error(`  ${c.r}${bad} 处锚点失配${c.x}——上游这一带改过了，需要按上面的清单重写 apply.mjs。\n`);
+		process.exit(1);
+	}
+	ok(`全部 ${EDITS.length} 个锚点都在`);
+	console.log("");
+	process.exit(0);
+}
+
+if (mode === "install" && !installed && v1Installed) {
+	die(
+		"检测到已经装着 v1.1.0 的「对话寄存区」",
+		"v2.0 是单一脚本装全部（寄存区 + 三条转发路由），不做增量安装。\n" +
+			"    请先用 v1.1.0 那份仓库卸载，再回来装 v2.0：\n" +
+			"      <v1.1.0 仓库>/bridge/install.sh \"" + TARGET + "\" --uninstall\n" +
+			"    卸载后前端会恢复成上游原样，装 v2.0 会把寄存区一起装回来（功能是 v1.1.0 的超集）。",
+	);
+}
 
 if (mode === "uninstall") {
-	if (!installed) { warn("本来就没装，无需卸载"); process.exit(0); }
+	if (!installed) {
+		if (v1Installed) {
+			die(
+				"这里装的是 v1.1.0，不是 v2.0，本脚本卸载不了它",
+				"v1.1.0 的锚点和 v2.0 不同。请用 v1.1.0 那份仓库的 install.sh --uninstall。",
+			);
+		}
+		warn("本来就没装，无需卸载");
+		process.exit(0);
+	}
 	// 先全部算好，再一次性落地——中途失败不留半成品
 	const out = new Map();
 	for (const [file, anchor, replaced] of EDITS) {
@@ -189,7 +300,8 @@ if (mode === "uninstall") {
 	}
 	await rm(paths.newStore, { force: true });
 	await rm(paths.newPanel, { force: true });
-	ok("已卸载。记得重新 npm run build");
+	await rm(paths.newRoutes, { force: true });
+	ok("已卸载（含后端转发路由）。记得重新 npm run build");
 	process.exit(0);
 }
 
@@ -215,6 +327,10 @@ await mkdir(dirname(paths.newStore), { recursive: true });
 await writeFile(paths.newStore, await readFile(join(HERE, "files", "staging-store.ts"), "utf8"), "utf8");
 await writeFile(paths.newPanel, await readFile(join(HERE, "files", "StagingArea.tsx"), "utf8"), "utf8");
 ok("新增 staging-store.ts / StagingArea.tsx");
+
+await mkdir(dirname(paths.newRoutes), { recursive: true });
+await writeFile(paths.newRoutes, await readFile(join(HERE, "files", "l2-editor-routes.ts"), "utf8"), "utf8");
+ok("新增 l2-editor-routes.ts（三条转发路由）");
 
 for (const [file, text] of out) {
 	await writeFile(file, text, "utf8");
