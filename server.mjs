@@ -601,9 +601,17 @@ const server = createServer(async (req, res) => {
 				path: url.searchParams.get("path"),
 				title: fields.title ?? "",
 				type: fields.type ?? "",
+				// created 22/22 页都有，但从来没显示过（§12）。
+				// 它和 updated 并排才有意义——"这页什么时候建的、上次动是什么时候"
+				created: fields.created ?? "",
 				updated: fields.updated ?? "",
 				status: fields.status ?? "",
 				confidence: fields.confidence ?? "",
+				// 来源溯源（§12）：红线 1「任何读取都能说明自己的来源」的直接要求。
+				// 这两个字段一直躺在 frontmatter 里，界面上完全看不到。
+				// 数组形态在磁盘上可能是行内也可能是块序列，readFields 两种都认
+				sources: Array.isArray(fields.sources) ? fields.sources : (fields.sources ? [fields.sources] : []),
+				sourceIds: Array.isArray(fields.source_ids) ? fields.source_ids : (fields.source_ids ? [fields.source_ids] : []),
 				tags: Array.isArray(fields.tags) ? fields.tags : [],
 				links,
 				bodyLinks,
@@ -916,16 +924,37 @@ const server = createServer(async (req, res) => {
 		// 已冻结的来源清单。每条都现场重算 hash 对账，intact:false 就是原件被动过
 		if (req.method === "GET" && url.pathname === "/api/sources") {
 			const metas = await listSources(SOURCES);
+			// 把 src_ ↔ l2src_ 的映射一并透出来（存在插件侧的 meta.json，见 §4）。
+			// 页面 frontmatter 里的 source_ids 记的是**上游**的 l2src_，
+			// 而冻结区的主键是 src_ ——不给映射，来源溯源就永远对不上号。
+			let map = {};
+			try {
+				map = JSON.parse(await readFile(join(SOURCES, "meta.json"), "utf8"));
+			} catch { /* 还没归档过任何东西 */ }
 			const items = [];
 			for (const m of metas) {
 				const v = await verifySource(SOURCES, m.sourceId).catch(() => ({ intact: false }));
-				items.push({ ...m, intact: v.intact });
+				items.push({ ...m, intact: v.intact, upstreamId: map[m.sourceId]?.upstreamId ?? null });
 			}
 			return json(res, 200, { sources: items });
 		}
 
 		// 摄入并冻结。内容寻址，同一份内容重复摄入是幂等的。
 		// 接受一段 text，或多段 segments（把 AI 的几轮回答攒成一份资料）
+		// 读一份冻结来源的原文（来源溯源要用，§12）。
+		// 现场重算 hash 对账一并带回——用户点开来源就是为了核对，
+		// 那就必须同时告诉他"这份原件还是不是摄入时那一份"。
+		if (req.method === "GET" && url.pathname.startsWith("/api/sources/")) {
+			const id = decodeURIComponent(url.pathname.slice("/api/sources/".length));
+			try {
+				const one = await readSource(SOURCES, id);
+				const v = await verifySource(SOURCES, id).catch(() => ({ intact: false }));
+				return json(res, 200, { ...one.meta, text: one.text, intact: v.intact });
+			} catch {
+				return json(res, 404, { error: "找不到这份来源" });
+			}
+		}
+
 		if (req.method === "POST" && url.pathname === "/api/sources") {
 			const payload = await readBody(req);
 			const hasSegments = Array.isArray(payload.segments) &&

@@ -545,6 +545,28 @@
     background: var(--surface-muted); color: var(--text-muted);
   }
   .taskNote.bad { border-color: var(--danger); color: var(--danger); }
+
+  /* ── §12：页头属性条（status / confidence / 来源溯源）── */
+  .props {
+    display: flex; flex-wrap: wrap; align-items: center; gap: .9rem;
+    padding: .5rem 0 .9rem; border-bottom: 1px solid var(--border); margin-bottom: 1.1rem;
+  }
+  .prop { display: inline-flex; align-items: center; gap: .35rem; font-size: .8rem; }
+  .prop .k { color: var(--text-subtle); font-family: var(--mono); font-size: .68rem; letter-spacing: .06em; }
+  .prop select {
+    font: inherit; font-size: .8rem; color: var(--text); background: var(--surface);
+    border: 1px solid var(--border); border-radius: 4px; padding: .1rem .3rem;
+  }
+  .prop select:focus { outline: none; border-color: var(--accent); }
+  .prop .v.none { color: var(--text-subtle); }
+  .srcLink {
+    color: var(--accent); text-decoration: none; border-bottom: 1px dotted var(--accent);
+    margin-right: .4rem;
+  }
+  .srcLink:hover { border-bottom-style: solid; }
+  .rawSrc { color: var(--warning); border-bottom-color: var(--warning); }
+  /* 冻结来源弹窗里的原文要能看清，且**不渲染公式**——核对引文要看原样字节 */
+  #srcBody { white-space: pre-wrap; font-family: var(--mono); font-size: .82rem; line-height: 1.6; }
 </style>
 
 <!--
@@ -614,6 +636,8 @@ const S = {
   graph: null,
   // U-E：搜索与类型过滤
   q: "", search: null, searching: false, typeFilter: null, qTimer: null,
+  // §12：status / confidence 现在可改（服务端一直支持，缺的是入口）
+  status: "", confidence: "",
 };
 const $ = (id) => document.getElementById(id);
 
@@ -722,7 +746,15 @@ function renderMd(src) {
   src = text;
   const out = []; let items = null;
   const inline = (t) => esc(t)
-    .replace(/\[\[([^\]]+)\]\]/g, (_, n) => `<a class="wl" href="#" data-link="${esc(n)}">${esc(n)}</a>`)
+    // 别名 [[目标|显示]]：**显示后半段、链到前半段**。
+    // 上游 normalizeWikiLink 取的是 `|` 前半段作为目标（wiki-links.ts:15），
+    // 而这里原先把整个「目标|显示」都显示出来了——§12 记过这个 bug。
+    // data-link 必须放**目标**，drawDoc 靠它去 catalog 里找页、判断是不是幻影链接。
+    .replace(/\[\[([^\]]+)\]\]/g, (_, n) => {
+      const target = n.split("|")[0].trim();
+      const shown = n.includes("|") ? n.slice(n.indexOf("|") + 1).trim() : target;
+      return `<a class="wl" href="#" data-link="${esc(target)}">${esc(shown)}</a>`;
+    })
     .replace(/`([^`]+)`/g, "<code>$1</code>")
     .replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>");
 
@@ -961,9 +993,135 @@ async function open(path) {
   if (S.dirty && !confirm("有未保存的改动，确定离开？")) return;
   S.page = await (await fetch(`/api/page?path=${encodeURIComponent(path)}`)).json();
   S.tags = [...S.page.tags]; S.links = [...S.page.links]; S.body = S.page.body;
+  S.status = S.page.status; S.confidence = S.page.confidence;
   S.dirty = false; S.picking = null; S.editing = false;
   drawNav(); drawDoc(); drawSide(); drawGraph();
   $("doc").scrollTop = 0;
+}
+
+/**
+ * 页头下方的属性条：status / confidence 可改 + 来源溯源。
+ *
+ * 这两件事的服务端**早就能做了**——`patchFrontmatter` 的托管字段表里
+ * 一直有 status 与 confidence，只是界面上没有入口（§17 盘点：「半成品，只差界面」）。
+ *
+ * 来源溯源是红线 1「任何读取都能说明自己的来源」的直接要求：
+ * frontmatter 里的 sources / source_ids 一直躺着，界面上完全看不到（§12）。
+ */
+const STATUS_OPTS = [
+  ["draft", "草稿"],
+  ["reviewed", "已复核"],
+  ["outdated", "已过时"],
+];
+// 三档的含义直接引 SCHEMA，避免"三色徽章配上没有定义的等级"制造虚假可信感（§7）
+const CONF_OPTS = [
+  ["high", "高", "有多份来源佐证，或来自权威资料"],
+  ["medium", "中", "单一来源，未见冲突"],
+  ["low", "低", "来源存疑，或与别处说法不一致"],
+];
+
+function propsBar() {
+  const p = S.page;
+  const bar = document.createElement("div");
+  bar.className = "props";
+
+  const mkSelect = (label, value, opts, onPick, titleOf) => {
+    const wrap = document.createElement("label");
+    wrap.className = "prop";
+    wrap.innerHTML = `<span class="k">${label}</span>`;
+    const sel = document.createElement("select");
+    for (const o of opts) {
+      const [v, text, hint] = o;
+      const op = document.createElement("option");
+      op.value = v; op.textContent = text;
+      if (hint) op.title = hint;
+      if (v === value) op.selected = true;
+      sel.append(op);
+    }
+    // 字段缺失时不假装有值：多一个「—」，选它等于不写这个字段
+    if (!value) {
+      const none = document.createElement("option");
+      none.value = ""; none.textContent = "—"; none.selected = true;
+      sel.prepend(none);
+    }
+    if (titleOf) sel.title = titleOf(value);
+    sel.onchange = () => { onPick(sel.value); if (titleOf) sel.title = titleOf(sel.value); };
+    wrap.append(sel);
+    return wrap;
+  };
+
+  bar.append(mkSelect("状态", p.status, STATUS_OPTS, (v) => { S.status = v; touch(); }));
+  bar.append(mkSelect("可信度", p.confidence, CONF_OPTS, (v) => { S.confidence = v; touch(); },
+    (v) => (CONF_OPTS.find((o) => o[0] === v)?.[2] ?? "未标注可信度")));
+
+  // ── 来源溯源 ──
+  const srcs = p.sources ?? [];
+  const ids = p.sourceIds ?? [];
+  const box = document.createElement("span");
+  box.className = "prop src";
+  if (!srcs.length && !ids.length) {
+    box.innerHTML = `<span class="k">来源</span><span class="v none">未标注</span>`;
+  } else {
+    box.innerHTML = `<span class="k">来自</span>`;
+    // 两类东西不要混：sources 指向**知识库里的资料页**（模型写的摘要），
+    // source_ids 指向**冻结原文**。用户要核对"这条是不是编的"时要的是后者。
+    for (const one of srcs) {
+      const a = document.createElement("a");
+      a.href = "#"; a.className = "srcLink"; a.textContent = one.split("/").pop().replace(/\.md$/, "");
+      a.title = one.startsWith("wiki/") ? `${one}（知识库里的资料页）` : one;
+      a.onclick = (e) => { e.preventDefault(); if (one.startsWith("wiki/")) open(one); else showFrozenSource(one, ids); };
+      box.append(a);
+    }
+    if (ids.length) {
+      const raw = document.createElement("a");
+      raw.href = "#"; raw.className = "srcLink rawSrc"; raw.textContent = "看冻结原文";
+      raw.title = `source_ids：${ids.join("、")}`;
+      raw.onclick = (e) => { e.preventDefault(); showFrozenSource(ids[0], ids); };
+      box.append(raw);
+    }
+  }
+  bar.append(box);
+  return bar;
+}
+
+/**
+ * 打开冻结来源的原文。
+ *
+ * 这里**故意显示原样字节**，公式也不渲染——你要核对模型有没有编，
+ * 就得看到源里到底写了什么（D-16 / D-18 的口径）。
+ */
+async function showFrozenSource(name, ids) {
+  const dlg = $("src");
+  dlg.querySelector(".conflictBar")?.remove();
+  setHeader("srcTitle", `冻结来源 · ${name}`);
+  $("srcBody").textContent = "读取中…";
+  dlg.showModal();
+  try {
+    const list = await (await fetch("/api/sources")).json();
+    // meta.json 里记着 src_ ↔ l2src_ 的映射（§4），两个 ID 空间都要能查
+    // 三种对法都试：插件自己的 src_、映射过去的 l2src_、以及文件名。
+    // 只按 sourceId 比对是永远匹配不上的——页面里记的是上游的 l2src_（§4 的两个 ID 空间）
+    const hit = (list.sources ?? []).find((x) =>
+      ids.includes(x.sourceId) ||
+      (x.upstreamId && ids.includes(x.upstreamId)) ||
+      x.filename === name || x.title === name);
+    if (!hit) {
+      $("srcBody").textContent =
+        `这一页的 frontmatter 记着来源「${name}」，但冻结区里找不到它。\n\n` +
+        `可能是：这一页由 InnoSpark 那边归档产生（原文在上游的 raw/ 里），` +
+        `或者插件的冻结区被清过。\n\n` +
+        `本页记录的 source_ids：${ids.join("、") || "（无）"}`;
+      return;
+    }
+    const one = await (await fetch(`/api/sources/${encodeURIComponent(hit.sourceId)}`)).json();
+    $("srcBody").textContent =
+      `${hit.filename ?? hit.title}\n` +
+      `sourceId：${hit.sourceId}\n` +
+      `完整性：${hit.intact ? "✓ 与摄入时逐字节一致" : "✗ 原件被改动过，引文核对已失去意义"}\n` +
+      `${"─".repeat(40)}\n\n${one.text ?? "（读不到正文）"}`;
+  } catch (err) {
+    $("srcBody").textContent = `读取失败：${String(err.message ?? err)}`;
+  }
 }
 
 function drawDoc() {
@@ -973,10 +1131,15 @@ function drawDoc() {
 
   const head = document.createElement("div");
   head.className = "dochead";
+  // created 22/22 页都有、从没显示过；updated 一直只显示不可改（§12）
+  const dates = [
+    p.created ? `创建于 ${esc(p.created)}` : "",
+    p.updated ? `更新于 ${esc(p.updated)}` : "",
+  ].filter(Boolean).join(" · ");
   head.innerHTML = `<div class="grow">
       <div class="crumb">${esc(p.path)}</div>
       <h1 class="t">${esc(p.title)}</h1>
-      <div class="meta">${esc(TYPE_LABEL[p.type] ?? p.type)} · 更新于 ${esc(p.updated || "—")} · ${esc(p.status || "draft")}</div>
+      <div class="meta">${esc(TYPE_LABEL[p.type] ?? p.type)}${dates ? " · " + dates : ""}</div>
     </div>`;
   const toggle = document.createElement("button");
   toggle.className = "mode";
@@ -984,6 +1147,7 @@ function drawDoc() {
   toggle.onclick = () => { S.editing = !S.editing; drawDoc(); };
   head.append(toggle);
   doc.append(head);
+  doc.append(propsBar());
 
   if (S.editing) {
     const ta = document.createElement("textarea");
@@ -1293,6 +1457,8 @@ async function doSave() {
   if (!same(S.tags, S.page.tags)) payload.tags = S.tags;
   if (!same(S.links, S.page.links)) payload.links = S.links;
   if (S.body !== S.page.body) payload.body = S.body;
+  if (S.status !== S.page.status) payload.status = S.status;
+  if (S.confidence !== S.page.confidence) payload.confidence = S.confidence;
   if (Object.keys(payload).length === 2) { S.dirty = false; drawSide(); return flash("没有改动"); }
 
   const r = await fetch("/api/page", {
@@ -1312,6 +1478,7 @@ async function doSave() {
   S.catalog = await (await fetch("/api/catalog")).json();
   S.page = await (await fetch(`/api/page?path=${encodeURIComponent(S.page.path)}`)).json();
   S.body = S.page.body; S.tags = [...S.page.tags]; S.links = [...S.page.links];
+  S.status = S.page.status; S.confidence = S.page.confidence;
   drawNav(); drawDoc(); drawSide();
   await loadGraph();
   flash(out.unchanged ? "内容没有变化，没有写盘" : "已写回 md");
