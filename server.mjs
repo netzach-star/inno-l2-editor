@@ -464,6 +464,36 @@ const server = createServer(async (req, res) => {
 			return res.end(html);
 		}
 
+		// KaTeX 的静态资源。这是这个服务**唯一**伺服的第三方文件。
+		//
+		// 为什么要伺服而不是走 CDN：编辑器要能在没有外网的机器上跑
+		// （它编辑的是本地知识库，不该因为断网就渲染不出公式）。
+		//
+		// 为什么是 optionalDependency：沿用 polish-agent 那条既有纪律——
+		// **不装也能跑**。没装 katex 时这里 404，前端拿不到 renderMathInElement
+		// 就跳过渲染，公式原样显示（= 装之前的行为），其余功能一律不受影响。
+		if (req.method === "GET" && url.pathname.startsWith("/vendor/katex/")) {
+			const rel = url.pathname.slice("/vendor/katex/".length);
+			// 只放行 dist 下这几类，且必须落在 dist 里面——防路径穿越
+			if (!/^[\w./-]+\.(js|css|woff2|woff|ttf)$/.test(rel) || rel.includes("..")) {
+				return json(res, 400, { error: "非法路径" });
+			}
+			const base = join(ROOT, "node_modules", "katex", "dist");
+			const abs = join(base, rel);
+			if (relative(base, abs).startsWith("..")) return json(res, 400, { error: "非法路径" });
+			let buf;
+			try {
+				buf = await readFile(abs);
+			} catch {
+				// 没装 katex。如实 404，不伪造一个空文件让前端以为拿到了
+				return json(res, 404, { error: "katex 未安装（npm i katex），公式将原样显示" });
+			}
+			const type = { js: "text/javascript", css: "text/css", woff2: "font/woff2",
+				woff: "font/woff", ttf: "font/ttf" }[rel.split(".").pop()];
+			res.writeHead(200, { "content-type": `${type}; charset=utf-8`, "cache-control": "max-age=86400" });
+			return res.end(buf);
+		}
+
 		if (req.method === "GET" && url.pathname === "/api/catalog") {
 			const cat = await buildCatalog();
 			// 界面要如实显示「你正在编辑哪一份知识库」——沙盒和真实库不能长一样

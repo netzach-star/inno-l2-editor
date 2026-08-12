@@ -22,16 +22,25 @@
 //   不带 --full：只做 ① ②，不改上游一个字节，也不需要上游在跑。**平时用这个。**
 //   带 --full  ：连 ③ ④ 一起做。④ 会真的装一次再卸一次，
 //                期间要 npm run build（几分钟），且会把上游前端改了又改回来。
+//   带 --remote：**另外**去 GitHub 浅克隆上游最新的 main 到临时目录，在那上面验锚点。
+//
+// ⚠️ ①②③④ 验的都是**你本地这份 clone**——它可能已经落后上游很多天。
+// 那只回答"我装好的这份还完整吗"，**不回答"上游最新版还认不认这些锚点"**。
+// 而 §13.2 要的是后者（"让它先在我们这边断"，别等用户安装时才断）。
+// 所以 `--remote` 才是这个脚本真正的早期预警，**升级上游之前先跑它**。
 
 import { spawnSync } from "node:child_process";
 import { readdir } from "node:fs/promises";
-import { existsSync } from "node:fs";
+import { existsSync, mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const [, , rawTarget, ...flags] = process.argv;
 const FULL = flags.includes("--full");
+const REMOTE = flags.includes("--remote");
+const UPSTREAM_URL = process.env.UPSTREAM_REPO ?? "https://github.com/hhyqhh/inno-agent";
 const UP = process.env.UPSTREAM ?? "http://localhost:3000";
 
 if (!rawTarget) {
@@ -70,13 +79,13 @@ console.log("  ── ① 锚点（按裁定二，这是核心风险控制）─
 
 console.log("\n  ── ② 转发路由的编译（签名变了就过不了）──\n");
 {
-	const routes = join(TARGET, "apps", "inno-agent", "src", "memory", "l2", "l2-editor-routes.ts");
+	const routes = join(TARGET, "apps", "inno-agent", "src", "server", "routes", "l2-editor.ts");
 	if (!existsSync(routes)) {
 		console.log(`  ${c.d}bridge 没装，跳过编译检查（装了再跑一次）${c.x}`);
 	} else {
 		const r = run("npx", ["tsc", "--noEmit", "-p", "apps/inno-agent/tsconfig.json"]);
 		const out = `${r.stdout ?? ""}${r.stderr ?? ""}`.split("\n").filter((l) => l.includes("error")).slice(0, 8);
-		ok("l2-editor-routes.ts 编译通过（上游 createL2Tools / L2Memory.search / " +
+		ok("l2-editor.ts 编译通过（上游 createL2Tools / L2Memory.search / " +
 			"serializeFrontmatter / slugifyTitle 的签名没变）",
 			r.status === 0, out.join("\n      "));
 	}
@@ -121,7 +130,7 @@ if (FULL) {
 	const PRE_EXISTING = [/package-lock\.json$/];
 	const ours = (lines) => lines.filter((l) => !PRE_EXISTING.some((re) => re.test(l)));
 
-	const routesFile = join(TARGET, "apps", "inno-agent", "src", "memory", "l2", "l2-editor-routes.ts");
+	const routesFile = join(TARGET, "apps", "inno-agent", "src", "server", "routes", "l2-editor.ts");
 	const apply = (mode) => spawnSync("node", [join(HERE, "bridge", "apply.mjs"), TARGET, mode], { encoding: "utf8" });
 
 	// 基线必须是**纯净态**，不是"我们开始跑的时候碰巧是什么样"。
@@ -156,7 +165,7 @@ if (FULL) {
 	// 新增的三个文件必须真的没了
 	const leftovers = [];
 	for (const rel of [
-		"apps/inno-agent/src/memory/l2/l2-editor-routes.ts",
+		"apps/inno-agent/src/server/routes/l2-editor.ts",
 		"apps/inno-agent/web/src/react/StagingArea.tsx",
 		"apps/inno-agent/web/src/stores/staging-store.ts",
 	]) if (existsSync(join(TARGET, rel))) leftovers.push(rel);
@@ -165,6 +174,37 @@ if (FULL) {
 	console.log(`\n  ${c.y}注意：现在上游是**未安装**状态。要继续用，重新跑一次：${c.x}`);
 	console.log(`  ${c.d}  node bridge/apply.mjs "${TARGET}" install && (cd "${TARGET}" && npm run build)${c.x}`);
 	void readdir;
+}
+
+/* ---------------- ⑤ 上游最新版还认不认这些锚点 ---------------- */
+
+if (REMOTE) {
+	console.log("\n  ── ⑤ 对上游**最新** main 验锚点（早期预警）──\n");
+	const tmp = mkdtempSync(join(tmpdir(), "inno-upstream-"));
+	try {
+		// 浅克隆到临时目录。**本地那份 inno-agent 一个字节都不碰**——
+		// 它是只读参考，而且我们要验的本来就不是它。
+		const cl = spawnSync("git", ["clone", "--quiet", "--depth", "1", UPSTREAM_URL, tmp], { encoding: "utf8" });
+		if (cl.status !== 0) {
+			console.log(`  ${c.y}!${c.x} 克隆不下来（没网？），跳过：${(cl.stderr ?? "").trim().slice(0, 120)}`);
+		} else {
+			const head = spawnSync("git", ["-C", tmp, "log", "-1", "--format=%h %ad %s", "--date=short"], { encoding: "utf8" }).stdout.trim();
+			const mine = spawnSync("git", ["-C", TARGET, "log", "-1", "--format=%h %ad", "--date=short"], { encoding: "utf8" }).stdout.trim();
+			console.log(`  ${c.d}本地   ${mine}${c.x}`);
+			console.log(`  ${c.d}上游   ${head}${c.x}\n`);
+
+			const r = spawnSync("node", [join(HERE, "bridge", "apply.mjs"), tmp, "check"], { encoding: "utf8" });
+			const out = `${r.stdout ?? ""}${r.stderr ?? ""}`;
+			const bad = out.split("\n").filter((l) => l.includes("✗"));
+			ok("上游最新 main 上，锚点全部还在", r.status === 0, bad.join("\n      "));
+			if (r.status !== 0) {
+				console.log(`\n${c.y}  ↑ 这就是重写清单。上游已经动过这几处，`);
+				console.log(`     **在把本地 clone 升上去之前**先改 apply.mjs。${c.x}\n`);
+			}
+		}
+	} finally {
+		rmSync(tmp, { recursive: true, force: true });
+	}
 }
 
 /* ---------------- 结果 ---------------- */

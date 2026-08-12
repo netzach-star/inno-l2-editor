@@ -546,6 +546,18 @@
   }
   .taskNote.bad { border-color: var(--danger); color: var(--danger); }
 </style>
+
+<!--
+  KaTeX。**可选依赖**——没装就 404，前端拿不到 renderMathInElement 便跳过渲染，
+  公式原样显示（= 装之前的行为），其余功能一律不受影响。
+  沿用 polish-agent 那条既有纪律：不装也能跑。
+
+  为什么伺服本地而不是 CDN：这个编辑器改的是本地知识库，
+  不该因为断网就渲染不出公式。
+-->
+<link rel="stylesheet" href="/vendor/katex/katex.min.css">
+<script defer src="/vendor/katex/katex.min.js"></script>
+<script defer src="/vendor/katex/contrib/auto-render.min.js"></script>
 </head>
 <body>
 
@@ -634,8 +646,80 @@ const TYPE_LABEL = { "source-summary": "资料摘要", concept: "概念", entity
 const anchored = (f) => f.anchor !== undefined && f.anchor !== "none";
 const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
 
+/* ---------------- 数学公式（KaTeX） ----------------
+   为什么是"渲染完 HTML 再扫 DOM"，而不是像上游那样在字符串管线里处理：
+
+   上游 `normalizeMarkdownMath` 有 138 行，**全部**在解决一个它自己造出来的问题——
+   它的渲染器在 KaTeX 之前就把 `<` 转义成了 `&lt;`，于是要手工把
+   `&lt;`→`\lt`、`&le;`→`\le` 一路转回 TeX 命令。
+   我们走 DOM 后处理，`&lt;` 在进 DOM 那一刻就被浏览器解码回真正的 `<` 了，
+   **这个坑天然不踩**。照搬那 138 行等于抄一副治别人病的药——
+   复用上游的是**能力**，不是它的补丁。
+
+   还有两个白捡的便宜：
+   · `renderMd` 的 inline() 只做 [[链接]] / `代码` / **粗体** 三件事，
+     **不处理 `_斜体_` 也不处理单个 `*`** —— 而那两个正是 markdown 吃掉 TeX 的主要途径
+     （`$a_1$` 在全功能渲染器里会被下划线规则拆掉，得专门加插件保护）。简陋在这里是优势。
+   · auto-render 的**默认定界符本来就不含单个 `$`**（只有 `$$` `\(` `\[` `\begin{}`），
+     而取样出来的分布正好是 `\(…\)` 208 次占主导、`$…$` 只有 24 次且集中在 1 条。
+     多数项目接 markdown-math 要改配置才不漏九成公式，**我们用默认配置就是对的**。 */
+const MATH_DELIMS = [
+  { left: "\\[", right: "\\]", display: true },
+  { left: "$$", right: "$$", display: true },
+  { left: "\\(", right: "\\)", display: false },
+];
+
+/** 把一个已经填好 innerHTML 的元素里的公式渲染掉。没装 KaTeX 就安静跳过。 */
+function renderMath(el) {
+  if (typeof renderMathInElement !== "function") return;   // 可选依赖没装
+  try {
+    renderMathInElement(el, {
+      delimiters: MATH_DELIMS,
+      // code / pre 自动豁免——上游那个手写的"跳过围栏代码块"逻辑，我们靠 DOM 结构白拿
+      ignoredTags: ["script", "noscript", "style", "textarea", "pre", "code"],
+      throwOnError: false,
+    });
+  } catch (err) {
+    // 渲染失败不能把整页带崩：公式原样留着比白屏强
+    console.warn("KaTeX 渲染失败，公式将原样显示", err);
+  }
+}
+
 /* ---------------- Markdown 渲染（一～五级标题、有序/无序列表、行内标记） ---------------- */
+/**
+ * 跨行的行间公式要先摘出来。
+ *
+ * `renderMd` 按 \n 切行、每行包一个 <p>，所以一个跨三行的 \[ … \] 会被切进三个元素，
+ * 而 auto-render **不跨元素合并**——它只在单个文本节点里找配对的定界符。
+ * 结果就是三行都渲染不出来，还各自露着半个定界符。
+ *
+ * 做法：切行之前先扫一遍，把跨行的 \[…\] 与 $$…$$ 整块换成占位符，
+ * 最后作为**单个** <div> 放回去。这是"先切数学、再跑 markdown"那个正确顺序的最小实现。
+ *
+ * 只处理**跨行**的：单行的 \[a\] 或 $$a$$ 本来就在一个 <p> 里，auto-render 接得住。
+ */
+function extractDisplayMath(src) {
+  const blocks = [];
+  // 占位符用 NUL 包起来。NUL 在 Markdown 正文里没有任何合法用途，
+  // 但**万一**真出现了（粘贴进来的二进制垃圾），它会冒充占位符，
+  // 最后被替换成 undefined。所以进门先剥掉。
+  //
+  // 这一步只影响**显示**：renderMd 的产物从不写回文件，
+  // 存盘走的是 S.body 那条路，磁盘字节不受影响。
+  src = src.replace(/\u0000/g, "");
+  const stash = (m) => {
+    blocks.push(m);
+    return `\u0000MATH${blocks.length - 1}\u0000`;
+  };
+  const out = src
+    .replace(/\\\[[\s\S]*?\\\]/g, (m) => (m.includes("\n") ? stash(m) : m))
+    .replace(/\$\$[\s\S]*?\$\$/g, (m) => (m.includes("\n") ? stash(m) : m));
+  return { text: out, blocks };
+}
+
 function renderMd(src) {
+  const { text, blocks } = extractDisplayMath(src);
+  src = text;
   const out = []; let items = null;
   const inline = (t) => esc(t)
     .replace(/\[\[([^\]]+)\]\]/g, (_, n) => `<a class="wl" href="#" data-link="${esc(n)}">${esc(n)}</a>`)
@@ -679,7 +763,15 @@ function renderMd(src) {
     } else { flush(); out.push(`<p>${inline(line)}</p>`); }
   }
   flush();
-  return out.join("");
+  // 占位符换回整块公式。**不经过 esc()** 之外的处理——它是原样的 TeX，交给 KaTeX 去认。
+  // 用 <div> 而不是 <p>：它是块级公式，且必须整块落在**一个**元素里。
+  return out.join("").replace(/\u0000MATH(\d+)\u0000/g, (whole, i) => {
+    const block = blocks[Number(i)];
+    // 越界就原样留着。宁可显示一个奇怪的占位符，也不要产出 undefined
+    return block === undefined
+      ? whole
+      : `</p><div class="mathblock">${esc(block)}</div><p>`;
+  });
 }
 
 /* ---------------- 启动 ---------------- */
@@ -946,6 +1038,7 @@ function drawDoc() {
     const md = document.createElement("div");
     md.className = "md";
     md.innerHTML = renderMd(S.body);
+    renderMath(md);
     doc.append(md);
     for (const a of md.querySelectorAll("a.wl")) {
       const t = S.catalog.pages.find((x) => x.title === a.dataset.link);
@@ -2143,6 +2236,7 @@ function openTutor() {
     const out = document.createElement("div");
     out.className = "out md";
     out.innerHTML = renderMd(g.src);
+    renderMath(out);
     right.append(out);
     demo.append(left, right);
     rule.append(demo);

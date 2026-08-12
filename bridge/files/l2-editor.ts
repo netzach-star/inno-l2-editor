@@ -1,9 +1,16 @@
 // L2 结构化编辑器的三条转发路由（inno-l2-editor v2.0 新增）
 //
-// 这个文件由 bridge/apply.mjs 拷进上游 apps/inno-agent/src/memory/l2/。
+// 这个文件由 bridge/apply.mjs 拷进上游 apps/inno-agent/src/server/routes/。
 // 上游原本没有这个文件，所以它**不改上游任何一行既有逻辑**——
 // server.ts 那边只需要两个锚点：一个 import、一个 dispatch 调用。
 // 锚点面越小，上游升级时越不容易断（见设计文档 §13.2）。
+//
+// ── 2026-08-08：跟随上游的路由模块化重构 ──
+// 上游把 4966 行的 server.ts 拆成了 server/routes/*.ts（e6fde67）。
+// 这个文件因此从 memory/l2/ 搬到 server/routes/，并**照抄 handleWikiRoutes 的形状**：
+// 同样的 (req, res, method, url, ctx) 签名、同样从 ctx 取 l2DataDir。
+// 好处不只是整齐——`json` / `readBody` / `safeJoinReal` 现在都是可直接 import 的模块，
+// 所以**依赖注入那一整套没了**：少一个接口、少五个要跟着上游改的形参。
 //
 // 三条路由都是**纯转发**：把上游已经有的能力暴露成 HTTP，不复制它的任何产物格式。
 // 这是设计文档 0.6 那条原则的直接实现——
@@ -32,33 +39,35 @@
 
 import { createHash, randomUUID } from "node:crypto";
 import { existsSync, readFileSync, readdirSync } from "node:fs";
-import type { IncomingMessage, ServerResponse } from "node:http";
+import type { IncomingMessage as HttpReq, ServerResponse } from "node:http";
 import { join } from "node:path";
 
-import { createL2Tools } from "./l2-tools.js";
-import { getL2Memory } from "./l2-memory.js";
-import { slugifyTitle } from "./wiki-linker.js";
+import type { InnoConfig } from "../../config.js";
+import { getSession } from "../../agent/pi-runner.js";
+import { createL2Tools } from "../../memory/l2/l2-tools.js";
+import { getL2Memory } from "../../memory/l2/l2-memory.js";
+import { slugifyTitle } from "../../memory/l2/wiki-linker.js";
 import {
 	appendLog,
 	ensureL2Directories,
 	parseFrontmatter,
 	rebuildIndex,
 	serializeFrontmatter,
-} from "./wiki-maintainer.js";
-import { readManifest } from "./manifest-store.js";
+} from "../../memory/l2/wiki-maintainer.js";
+import { readManifest } from "../../memory/l2/manifest-store.js";
 import { readText, writeText } from "../../storage/file-store.js";
-import type { ManifestEntry, WikiPageFrontmatter } from "./types.js";
+import type { ManifestEntry, WikiPageFrontmatter } from "../../memory/l2/types.js";
+import { safeJoinReal } from "../file-helpers.js";
+import { json, readBody } from "../http-helpers.js";
 
-/** 上游 server.ts 里已有的那几个局部工具，由调用方注入，避免再开锚点去导出它们。 */
-export interface L2EditorRouteDeps {
+/**
+ * 形状照抄上游的 `WikiRouteContext`（`server/routes/wiki.ts`）。
+ * 多一个 `getConfig`，口径同上游的 `SettingsRouteContext`——
+ * 两个都是上游现成的约定，不是我们发明的。
+ */
+export interface L2EditorRouteContext {
 	l2DataDir: string;
-	json(res: ServerResponse, status: number, data: unknown): void;
-	readBody(req: IncomingMessage): Promise<unknown>;
-	/** 越界返回 null，防路径穿越 */
-	safeJoin(baseDir: string, userPath: string): string | null;
-	/** 未初始化时会抛错，我们据此如实回 503 */
-	getSession(): { model?: unknown; modelRegistry: unknown };
-	isL2Enabled(): boolean;
+	getConfig: () => InnoConfig;
 }
 
 /** 整个文件的**原始字节**的 sha256。 */
@@ -77,8 +86,8 @@ function revisionOf(fullPath: string): string {
  * 抛错会当场炸出一条指名道姓的信息，而返回空值会让它静默走进错误分支，
  * 产出一个看起来成功、实际不对的归档。宁可响亮地失败（红线 3）。
  */
-function forwardContext(deps: L2EditorRouteDeps): never | Record<string, unknown> {
-	const session = deps.getSession();
+function forwardContext(): never | Record<string, unknown> {
+	const session = getSession();
 	const notHere = (name: string) => () => {
 		throw new Error(
 			`[l2-editor-routes] l2_archive 用到了 ctx.${name}，而 HTTP 转发路由没有这个东西。` +
@@ -179,18 +188,20 @@ function addWikiPathToManifest(l2DataDir: string, sourceId: string, wikiPath: st
 /**
  * 处理三条 /api/l2/* 路由。命中并已响应返回 true，未命中返回 false 让上游继续往下匹配。
  */
-export async function handleL2EditorRoute(
+export async function handleL2EditorRoutes(
+	req: HttpReq,
+	res: ServerResponse,
 	method: string,
 	url: string,
-	req: IncomingMessage,
-	res: ServerResponse,
-	deps: L2EditorRouteDeps,
+	ctx: L2EditorRouteContext,
 ): Promise<boolean> {
-	const { l2DataDir, json, readBody, safeJoin } = deps;
+	const { l2DataDir } = ctx;
+	const isL2Enabled = () => ctx.getConfig().memory?.l2Enabled !== false;
+	const safeJoin = safeJoinReal;
 
 	/* ---------------- POST /api/l2/archive ---------------- */
 	if (method === "POST" && url === "/api/l2/archive") {
-		if (!deps.isL2Enabled()) {
+		if (!isL2Enabled()) {
 			json(res, 409, { error: "L2 Wiki 知识库已在设置中关闭，当前不归档。" });
 			return true;
 		}
@@ -220,9 +231,9 @@ export async function handleL2EditorRoute(
 		}
 
 		// 会话没起来就如实说，不降级、不偷偷直写文件（红线 3）
-		let ctx: Record<string, unknown>;
+		let fwd: Record<string, unknown>;
 		try {
-			ctx = forwardContext(deps) as Record<string, unknown>;
+			fwd = forwardContext() as Record<string, unknown>;
 		} catch (err) {
 			json(res, 503, {
 				error: "归档不可用：agent 会话尚未初始化",
@@ -231,7 +242,7 @@ export async function handleL2EditorRoute(
 			return true;
 		}
 
-		const tools = createL2Tools(l2DataDir, () => deps.isL2Enabled(), getL2Memory(l2DataDir));
+		const tools = createL2Tools(l2DataDir, () => isL2Enabled(), getL2Memory(l2DataDir));
 		const archive = tools.find((t) => t.name === "l2_archive");
 		if (!archive) {
 			json(res, 500, { error: "上游 createL2Tools 里找不到 l2_archive，签名可能变了" });
@@ -252,7 +263,7 @@ export async function handleL2EditorRoute(
 				params as never,
 				undefined,
 				undefined,
-				ctx as never,
+				fwd as never,
 			);
 			const text = (result.content ?? [])
 				.map((c: { type: string; text?: string }) => (c.type === "text" ? (c.text ?? "") : ""))
@@ -296,7 +307,7 @@ export async function handleL2EditorRoute(
 
 	/* ---------------- POST /api/l2/page/concept ---------------- */
 	if (method === "POST" && url === "/api/l2/page/concept") {
-		if (!deps.isL2Enabled()) {
+		if (!isL2Enabled()) {
 			json(res, 409, { error: "L2 Wiki 知识库已在设置中关闭，当前不写入。" });
 			return true;
 		}

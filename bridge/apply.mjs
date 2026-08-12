@@ -24,7 +24,7 @@ import { fileURLToPath } from "node:url";
 const HERE = dirname(fileURLToPath(import.meta.url));
 // 判断是否已安装的标记。v2.0 换成后端那条 import——单一脚本装全部，
 // 后端那条在就说明整套都在。
-const MARK = "l2-editor-routes.js";
+const MARK = "l2-editor.js";
 // v1.1.0 的标记。用来识别「装着旧版」这种状态并给出可执行的提示，
 // 而不是让锚点对不上、甩一句看不懂的错。
 const MARK_V1 = "staging-store.js";
@@ -54,10 +54,12 @@ const paths = {
 	en: join(WEB, "i18n", "locales", "en.json"),
 	newStore: join(WEB, "stores", "staging-store.ts"),
 	newPanel: join(WEB, "react", "StagingArea.tsx"),
-	// v2.0 新增：后端
+	// 2026-08-08：上游把 MessageBubble 从 ChatCenter.tsx 抽了出去（e6fde67）
+	messageBubble: join(WEB, "react", "chat", "MessageBubble.tsx"),
+	// v2.0 新增：后端。路由随上游的模块化重构搬到 server/routes/
 	server: join(SRC, "server.ts"),
 	wikiLinker: join(SRC, "memory", "l2", "wiki-linker.ts"),
-	newRoutes: join(SRC, "memory", "l2", "l2-editor-routes.ts"),
+	newRoutes: join(SRC, "server", "routes", "l2-editor.ts"),
 };
 
 const exists = async (p) => { try { await stat(p); return true; } catch { return false; } };
@@ -67,7 +69,7 @@ const exists = async (p) => { try { await stat(p); return true; } catch { return
 if (!(await exists(join(TARGET, "package.json")))) {
 	die(`${TARGET} 里没有 package.json`, "第一个参数要指向 InnoSpark 的安装目录（有 restart-dev.sh 的那一层）");
 }
-for (const key of ["appStore", "workspacePanel", "chatCenter", "zh", "en", "server", "wikiLinker"]) {
+for (const key of ["appStore", "workspacePanel", "chatCenter", "messageBubble", "zh", "en", "server", "wikiLinker"]) {
 	if (!(await exists(paths[key]))) {
 		die(`找不到 ${paths[key]}`, "这看起来不像 InnoSpark 的代码结构，确认目录是否正确");
 	}
@@ -87,9 +89,10 @@ const EDITS = [
 	[paths.workspacePanel,
 		`, FolderKanban, Settings, Sparkles, UserRound } from "lucide-react";`,
 		`, FolderKanban, Inbox, Settings, Sparkles, UserRound } from "lucide-react";`],
+	// 2026-08-08 重锚：上游把 Notebook 改成了 lazy 加载
 	[paths.workspacePanel,
-		`import { Notebook } from "./Notebook.js";`,
-		`import { Notebook } from "./Notebook.js";\nimport { StagingArea } from "./StagingArea.js";\nimport { stagingStore } from "../stores/staging-store.js";`],
+		`const Notebook = lazy(() => import("./Notebook.js").then((mod) => ({ default: mod.Notebook })));`,
+		`const Notebook = lazy(() => import("./Notebook.js").then((mod) => ({ default: mod.Notebook })));\nimport { StagingArea } from "./StagingArea.js";\nimport { stagingStore } from "../stores/staging-store.js";`],
 	[paths.workspacePanel,
 		`const TAB_ORDER: RightPanelTab[] = ["preview", "notebook", "profile"`,
 		`const TAB_ORDER: RightPanelTab[] = ["preview", "notebook", "staging", "profile"`],
@@ -109,14 +112,20 @@ const EDITS = [
 		`\t\t\t\t\t\t\t\t{TAB_ICONS[tab]}\n\t\t\t\t\t\t\t\t{compact ? null : label}\n\t\t\t\t\t\t\t</button>`,
 		`\t\t\t\t\t\t\t\t{TAB_ICONS[tab]}\n\t\t\t\t\t\t\t\t{compact ? null : label}\n\t\t\t\t\t\t\t\t{tab === "staging" && stagedCount > 0 ? (\n\t\t\t\t\t\t\t\t\t<span className="ml-0.5 rounded-full bg-[var(--inno-accent)] px-1.5 text-[10px] font-medium leading-4 text-white">\n\t\t\t\t\t\t\t\t\t\t{stagedCount}\n\t\t\t\t\t\t\t\t\t</span>\n\t\t\t\t\t\t\t\t) : null}\n\t\t\t\t\t\t\t</button>`],
 
+	// ── 2026-08-08 重锚：StageButton 搬进 MessageBubble.tsx ──
+	//
+	// 上游把 MessageBubble 从 ChatCenter.tsx 抽成了独立组件。这反而是好事：
+	// ChatCenter.tsx 是上游最爱动的文件（两个月改了 34 次，v1.1.0 那次锚点断掉就在这），
+	// 现在它只剩**一个**锚点——把 question 传下去。
+	//
+	// question 用内联表达式算，不再另加 findQuestionFor 辅助函数：
+	// 少一个锚点，就少一处会断的地方。
 	[paths.chatCenter,
-		`, Search, FileCode2, Sparkles } from "lucide-react";`,
-		`, Search, FileCode2, Sparkles, Inbox, Check } from "lucide-react";`],
-	[paths.chatCenter,
-		`import { appStore } from "../stores/app-store.js";`,
-		`import { appStore } from "../stores/app-store.js";\nimport { stagingStore } from "../stores/staging-store.js";`],
-	[paths.chatCenter,
-		`function MessageBubble({ message, showChannel }: { message: ChatMessage; showChannel?: boolean }) {`,
+		`<MessageBubble message={message} showChannel={multiChannel} />`,
+		`<MessageBubble message={message} question={[...chat.messages.slice(0, index)].reverse().find((m) => m.role === "user")?.content ?? ""} showChannel={multiChannel} />`],
+
+	[paths.messageBubble,
+		`export const MessageBubble = memo(function MessageBubble({ message, showChannel }: { message: ChatMessage; showChannel?: boolean }) {`,
 		`/**
  * 「加入寄存区」——把这段回答连同它对应的提问一起攒起来，
  * 之后一次性交给 L2 结构化编辑器整理成 wiki 页面。
@@ -124,13 +133,6 @@ const EDITS = [
  * 只出现在已经落定的整段回答下方：流式过程中的文本走的是另一条渲染路径，
  * 不经过 MessageBubble，所以天然满足「每段完整回答」。
  */
-function findQuestionFor(messages: ChatMessage[], index: number): string {
-	for (let i = index - 1; i >= 0; i--) {
-		if (messages[i]!.role === "user") return messages[i]!.content;
-	}
-	return "";
-}
-
 function StageButton({ question, answer }: { question: string; answer: string }) {
 	const { t } = useTranslation();
 	const staged = useStoreSnapshot(stagingStore, () => stagingStore.has(answer));
@@ -153,15 +155,26 @@ function StageButton({ question, answer }: { question: string; answer: string })
 	);
 }
 
-function MessageBubble({ message, question, showChannel }: { message: ChatMessage; question?: string; showChannel?: boolean }) {`],
-	[paths.chatCenter,
-		`\t\t\t\t<AssistantContent content={message.content} />\n\t\t\t\t{message.error ? (\n\t\t\t\t\t<div className={message.content.trim() ? "mt-2" : ""}>\n\t\t\t\t\t\t<ErrorBlock error={message.error} />\n\t\t\t\t\t</div>\n\t\t\t\t) : null}`,
-		`\t\t\t\t<AssistantContent content={message.content} />\n\t\t\t\t{message.error ? (\n\t\t\t\t\t<div className={message.content.trim() ? "mt-2" : ""}>\n\t\t\t\t\t\t<ErrorBlock error={message.error} />\n\t\t\t\t\t</div>\n\t\t\t\t) : null}\n\t\t\t\t{!message.error ? <StageButton question={question ?? ""} answer={message.content} /> : null}`],
-	// 只锚一行 MessageBubble 调用，不碰外面的 map 结构。
-	// 上游在这一带加过 data-conversation-turn 的包裹层，锚大了必然被牵连。
-	[paths.chatCenter,
-		`<MessageBubble message={message} showChannel={multiChannel} />`,
-		`<MessageBubble message={message} question={findQuestionFor(chat.messages, index)} showChannel={multiChannel} />`],
+export const MessageBubble = memo(function MessageBubble({ message, question, showChannel }: { message: ChatMessage; question?: string; showChannel?: boolean }) {`],
+
+	[paths.messageBubble,
+		`import { X, AlertTriangle, FileCode2 } from "lucide-react";`,
+		`import { X, AlertTriangle, FileCode2, Inbox, Check } from "lucide-react";\nimport { stagingStore } from "../../stores/staging-store.js";\nimport { useStoreSnapshot } from "../hooks.js";`],
+
+	[paths.messageBubble,
+		`\t\t\t\t<AssistantTimelineContent content={message.content} questionnaires={answeredQuestionnaires} />
+\t\t\t\t{message.error ? (
+\t\t\t\t\t<div className={message.content.trim() ? "mt-2" : ""}>
+\t\t\t\t\t\t<ErrorBlock error={message.error} />
+\t\t\t\t\t</div>
+\t\t\t\t) : null}`,
+		`\t\t\t\t<AssistantTimelineContent content={message.content} questionnaires={answeredQuestionnaires} />
+\t\t\t\t{message.error ? (
+\t\t\t\t\t<div className={message.content.trim() ? "mt-2" : ""}>
+\t\t\t\t\t\t<ErrorBlock error={message.error} />
+\t\t\t\t\t</div>
+\t\t\t\t) : null}
+\t\t\t\t{!message.error ? <StageButton question={question ?? ""} answer={message.content} /> : null}`],
 
 	// ── v2.0 后端：三条锚点，实现全在新增的 l2-editor-routes.ts 里 ──
 
@@ -174,28 +187,17 @@ function MessageBubble({ message, question, showChannel }: { message: ChatMessag
 		`function slugifyTitle(title: string): string {`,
 		`export function slugifyTitle(title: string): string {`],
 
+	// 2026-08-08 重锚：上游把路由拆进 server/routes/，锚到它自己的注册行上。
+	// 这两条比原来更稳——它们是**模块注册**，只有整套路由架构再变一次才会动。
 	[paths.server,
-		`import { buildWikiGraph } from "./memory/l2/wiki-graph.js";`,
-		`import { buildWikiGraph } from "./memory/l2/wiki-graph.js";\nimport { handleL2EditorRoute } from "./memory/l2/l2-editor-routes.js";`],
-	// 挂在 Wiki API 之前：三条 /api/l2/* 与上游任何既有路由都不重名，
-	// 先匹配后匹配都一样，放这里只是为了让它们在代码里挨着 wiki 那组。
+		`import { handleWikiRoutes } from "./server/routes/wiki.js";`,
+		`import { handleWikiRoutes } from "./server/routes/wiki.js";\nimport { handleL2EditorRoutes } from "./server/routes/l2-editor.js";`],
 	[paths.server,
-		`\t\t// --- Wiki API ---`,
-		`\t\t// --- L2 编辑器转发路由（inno-l2-editor v2.0，纯新增，不碰下面任何一条）---
-\t\tif (
-\t\t\tawait handleL2EditorRoute(method, url, req, res, {
-\t\t\t\tl2DataDir,
-\t\t\t\tjson,
-\t\t\t\treadBody,
-\t\t\t\tsafeJoin,
-\t\t\t\tgetSession,
-\t\t\t\tisL2Enabled: () => config.memory?.l2Enabled !== false,
-\t\t\t})
-\t\t) {
-\t\t\treturn;
-\t\t}
+		`\t\tif (await handleWikiRoutes(req, res, method, url, { l2DataDir })) return;`,
+		`\t\tif (await handleWikiRoutes(req, res, method, url, { l2DataDir })) return;
 
-\t\t// --- Wiki API ---`],
+\t\t// --- L2 编辑器转发路由（inno-l2-editor v2.0，纯新增，不碰上面任何一条）---
+\t\tif (await handleL2EditorRoutes(req, res, method, url, { l2DataDir, getConfig: () => config })) return;`],
 ];
 
 const I18N = {
@@ -340,8 +342,8 @@ await writeFile(paths.newPanel, await readFile(join(HERE, "files", "StagingArea.
 ok("新增 staging-store.ts / StagingArea.tsx");
 
 await mkdir(dirname(paths.newRoutes), { recursive: true });
-await writeFile(paths.newRoutes, await readFile(join(HERE, "files", "l2-editor-routes.ts"), "utf8"), "utf8");
-ok("新增 l2-editor-routes.ts（三条转发路由）");
+await writeFile(paths.newRoutes, await readFile(join(HERE, "files", "l2-editor.ts"), "utf8"), "utf8");
+ok("新增 server/routes/l2-editor.ts（四条转发路由）");
 
 for (const [file, text] of out) {
 	await writeFile(file, text, "utf8");
