@@ -105,6 +105,32 @@
   .md a.wl:hover { border-bottom-color: var(--accent); }
   .md a.wl.missing { color: var(--text-subtle); border-bottom-style: dotted; }
 
+  /* ── 下面这些是 marked 接进来之后才可能出现的元素（D-20）。
+        在那之前它们一个都渲染不出来，所以以前也没有样式。 ── */
+  .md .tbl { overflow-x: auto; margin: .9rem 0; border: 1px solid var(--border); border-radius: 4px; }
+  .md table { border-collapse: collapse; width: 100%; font-size: .84rem; }
+  .md th, .md td { border-bottom: 1px solid var(--border); padding: .4rem .7rem; text-align: left; }
+  .md thead th { background: var(--surface-muted); font-weight: 600; color: var(--text); white-space: nowrap; }
+  .md tbody tr:last-child td { border-bottom: none; }
+  .md pre {
+    overflow-x: auto; margin: .9rem 0; padding: .8rem 1rem;
+    background: var(--surface-muted); border: 1px solid var(--border); border-radius: 4px;
+    font-family: var(--mono); font-size: .8rem; line-height: 1.7;
+  }
+  /* 代码块里的 code 不要再套一层行内 code 的底色和内边距 */
+  .md pre code { background: none; padding: 0; font-size: 1em; }
+  .md img { max-width: 100%; height: auto; border-radius: 4px; margin: .6rem 0; }
+  .md blockquote {
+    margin: .9rem 0; padding: .2rem 0 .2rem .9rem;
+    border-left: 3px solid var(--border-strong); color: var(--text-subtle);
+  }
+  .md hr { border: none; border-top: 1px solid var(--border); margin: 1.6rem 0; }
+  .md a:not(.wl) { color: var(--accent); text-decoration: none; border-bottom: 1px dotted var(--accent-soft); }
+  .md del { color: var(--text-subtle); }
+  .md .mathblock { overflow-x: auto; margin: 1rem 0; }
+  /* katex 没装或渲染失败时，公式原样显示成这个——如实标注，不假装渲染过（红线 3） */
+  .md .tex-raw { font-family: var(--mono); font-size: .84em; color: var(--text-subtle); }
+
   .editor {
     width: 100%; max-width: 42rem; min-height: 24rem; resize: vertical;
     border: 1px solid var(--border-strong); border-radius: 4px; background: var(--surface); color: var(--text);
@@ -570,16 +596,25 @@
 </style>
 
 <!--
-  KaTeX。**可选依赖**——没装就 404，前端拿不到 renderMathInElement 便跳过渲染，
-  公式原样显示（= 装之前的行为），其余功能一律不受影响。
-  沿用 polish-agent 那条既有纪律：不装也能跑。
+  两个可选依赖。**没装就 404，前端降级，不崩**——沿用 polish-agent 那条既有纪律。
+
+  · marked  —— Markdown 编译器。**上游（经 mini-lit）用的就是它**，我们装同一个
+               第三方库，而不是依赖上游的包（D-20）。没装时正文退化成纯段落。
+  · katex   —— 公式渲染。没装时公式原样显示。
+               注意这里**不再引 auto-render**：公式改由 marked 的 tokenizer 认
+               （四个扩展抄自上游 MarkdownBlock.js），块级公式天然跨行，
+               不再需要「先摘块再放回」那段预处理。
 
   为什么伺服本地而不是 CDN：这个编辑器改的是本地知识库，
-  不该因为断网就渲染不出公式。
+  不该因为断网就渲染不出公式和表格。
+
+  **顺序要紧**：这两个是 defer，而下面那段应用脚本是内联的、解析时就执行。
+  defer 在 DOMContentLoaded **之前**跑完，所以 boot() 挂在 DOMContentLoaded 上，
+  见文件末尾。别改回直接调 boot()——那是一个会偶发的竞态。
 -->
 <link rel="stylesheet" href="/vendor/katex/katex.min.css">
 <script defer src="/vendor/katex/katex.min.js"></script>
-<script defer src="/vendor/katex/contrib/auto-render.min.js"></script>
+<script defer src="/vendor/marked/marked.umd.js"></script>
 </head>
 <body>
 
@@ -670,139 +705,216 @@ const TYPE_LABEL = { "source-summary": "资料摘要", concept: "概念", entity
 const anchored = (f) => f.anchor !== undefined && f.anchor !== "none";
 const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
 
-/* ---------------- 数学公式（KaTeX） ----------------
-   为什么是"渲染完 HTML 再扫 DOM"，而不是像上游那样在字符串管线里处理：
+/* ---------------- Markdown 渲染（marked） ----------------
+   D-20：编译器不自己写，用**上游正在用的那个**。上游经 mini-lit 用 marked，
+   我们装同一个第三方库（optionalDependency，和 katex 一样）。
+   注意口径：是「装同一个第三方库 + 复制粘贴它的配置代码」，
+   **不是**依赖 `mini-lit` / `pi-web-ui` 这两个上游的包——两边没有依赖关系。
 
-   上游 `normalizeMarkdownMath` 有 138 行，**全部**在解决一个它自己造出来的问题——
-   它的渲染器在 KaTeX 之前就把 `<` 转义成了 `&lt;`，于是要手工把
-   `&lt;`→`\lt`、`&le;`→`\le` 一路转回 TeX 命令。
-   我们走 DOM 后处理，`&lt;` 在进 DOM 那一刻就被浏览器解码回真正的 `<` 了，
-   **这个坑天然不踩**。照搬那 138 行等于抄一副治别人病的药——
-   复用上游的是**能力**，不是它的补丁。
+   下面这些抄自上游 `@mariozechner/mini-lit/dist/MarkdownBlock.js`：
+   · escapeHtmlKeepMarkdown  ← 第 32–56 行，逻辑一字未改
+   · 四个数学扩展            ← 第 57–190 行，只改了出错时的 class 名与一处解码（见下）
+   · 链接开新窗 / 表格包容器  ← 第 191–209 行，class 换成我们自己的
 
-   还有两个白捡的便宜：
-   · `renderMd` 的 inline() 只做 [[链接]] / `代码` / **粗体** 三件事，
-     **不处理 `_斜体_` 也不处理单个 `*`** —— 而那两个正是 markdown 吃掉 TeX 的主要途径
-     （`$a_1$` 在全功能渲染器里会被下划线规则拆掉，得专门加插件保护）。简陋在这里是优势。
-   · auto-render 的**默认定界符本来就不含单个 `$`**（只有 `$$` `\(` `\[` `\begin{}`），
-     而取样出来的分布正好是 `\(…\)` 208 次占主导、`$…$` 只有 24 次且集中在 1 条。
-     多数项目接 markdown-math 要改配置才不漏九成公式，**我们用默认配置就是对的**。 */
-const MATH_DELIMS = [
-  { left: "\\[", right: "\\]", display: true },
-  { left: "$$", right: "$$", display: true },
-  { left: "\\(", right: "\\)", display: false },
-];
+   **没抄的两块**：
+   · 第 210–237 行把代码块换成 mini-lit 自己的 `<code-block>` 元素——我们没有那个元素，
+     保留 marked 原本吐的 `<pre><code>`；
+   · 第 12–31、238–257 行的 lit 外壳——那是「怎么把 HTML 挂上页面」，我们本来就有。
 
-/** 把一个已经填好 innerHTML 的元素里的公式渲染掉。没装 KaTeX 就安静跳过。 */
-function renderMath(el) {
-  if (typeof renderMathInElement !== "function") return;   // 可选依赖没装
+   **我们自己加的只有一条**：`[[wikilink]]` 行内扩展。这是本项目的专有语法，marked 不认。
+
+   ── 公式为什么不再走 auto-render ──
+   以前是「渲染完 HTML 再扫 DOM」，而旧 renderMd 按行切 <p>，跨三行的 \[…\] 会被切进
+   三个元素、auto-render 又不跨元素合并，所以得先摘块再放回（那段预处理已随本次改动删掉）。
+   marked 的**块级 tokenizer 天然跨行**，这个坑从根上不存在。 */
+
+/**
+ * 抄自上游 MarkdownBlock.js:32-56：先把代码块换成占位符，再转义 HTML 标签，最后还原。
+ *
+ * **为什么需要这一步**：marked 默认**原样输出裸 HTML**，而这里的正文来自 AI 产出与
+ * 用户粘贴，不该让它往页面里注入标签。旧 renderMd 是对每行做 esc()（全量转义），
+ * 换成 marked 之后不能再那么干——那会把 markdown 语法本身也转义掉。
+ * 上游这套的取舍正好合适：**只转义标签，放过 markdown 记号。**
+ *
+ * ⚠️ 如实标注它的边界（红线 3）：它挡的是 `<tag …>` 形态。
+ * HTML 注释 `<!-- -->`、以及后面跟着非空白字符的孤立 `<`（如 `a<b`）不在它的匹配里。
+ * 前者被浏览器当注释不显示，后者最终由 marked 自己转义成文本。
+ * **这不是一个完备的消毒器**——它和上游是同一套、同一个强度。
+ * 我们复用上游的能力，也就一并继承它的边界，这一条要写出来而不是假装没有。
+ */
+function escapeHtmlKeepMarkdown(src) {
+  const codeBlocks = [];
+  let out = String(src).replace(/```[\s\S]*?```|`[^`\n]+`/g, (match) => {
+    codeBlocks.push(match);
+    return `__CODE_BLOCK_${codeBlocks.length - 1}__`;
+  });
+  out = out
+    .replace(/<(\w+)([^>]*)>/g, "&lt;$1$2&gt;")
+    .replace(/<\/(\w+)>/g, "&lt;/$1&gt;")
+    .replace(/<(\w+)([^>]*)\s*\/>/g, "&lt;$1$2/&gt;")
+    .replace(/<(?![^\s])/g, "&lt;");
+  codeBlocks.forEach((block, index) => {
+    out = out.replace(`__CODE_BLOCK_${index}__`, () => block);
+  });
+  return out;
+}
+
+/**
+ * 把上一步引入的实体还原回 TeX。**这两行是 D-18 那 138 行的最小必要残留。**
+ *
+ * D-18 当时判断「上游 normalizeMarkdownMath 那 138 行是在治它自己的病，我们天然不踩」——
+ * 那个判断在**走 DOM 后处理**时是对的（`&lt;` 进 DOM 就被浏览器解码回 `<` 了）。
+ * 但公式改由 tokenizer 认之后，token.text 是**字符串**，没有 DOM 那一步解码，
+ * 于是同一个坑又出现了：`\(a < b\)` 经上面那步会变成 `\(a &lt; b\)`，KaTeX 会照着渲染出实体。
+ *
+ * 所以这里补上还原。**只还原 `&lt;` / `&gt;` 这两个**——因为上一步只可能产出这两个；
+ * `&` 从未被转义，所以源码里的 `&amp;` 是用户自己写的字面量（TeX 里 `\&` 合法），碰不得。
+ *
+ * 换句话说：那 138 行里真正对我们成立的只有 2 行，其余 136 行仍然是别人的药。
+ */
+function unescapeTex(text) {
+  return String(text).replace(/&lt;/g, "<").replace(/&gt;/g, ">");
+}
+
+/** 公式渲染。katex 没装时不抛错，原样把 TeX 显示出来（可选依赖纪律）。 */
+function renderTex(tex, displayMode) {
   try {
-    renderMathInElement(el, {
-      delimiters: MATH_DELIMS,
-      // code / pre 自动豁免——上游那个手写的"跳过围栏代码块"逻辑，我们靠 DOM 结构白拿
-      ignoredTags: ["script", "noscript", "style", "textarea", "pre", "code"],
+    return katex.renderToString(unescapeTex(tex), {
       throwOnError: false,
+      displayMode,
+      output: "html",
     });
   } catch (err) {
-    // 渲染失败不能把整页带崩：公式原样留着比白屏强
-    console.warn("KaTeX 渲染失败，公式将原样显示", err);
+    // 没装 katex 会走到这里（ReferenceError），渲染失败也走这里。
+    // 两种情况都**原样显示 TeX**——比白屏或者悄悄吞掉一段公式强。
+    console.warn("KaTeX 未就绪或渲染失败，公式原样显示", err);
+    return `<span class="tex-raw">${esc(tex)}</span>`;
   }
 }
 
-/* ---------------- Markdown 渲染（一～五级标题、有序/无序列表、行内标记） ---------------- */
+/* 数学扩展，抄自上游 MarkdownBlock.js:57-190。上游有四个，**我们只注册三个。**
+
+   ── 一处有意的偏离：不认行内的单个 `$` ──
+   上游那个 `inlineMathDollar` 会把 `$…$` 当公式。抄过来实测，
+   中文正文里的「价格 $100 到 $200」**当场被吃成一条公式**
+   （KaTeX 还会为此报 unicodeTextInMathMode）。
+
+   这不是新发现，是 D-18 早就定过的口径：当时选 auto-render 的默认定界符
+   （本来就不含单个 `$`），并**为此写了一条断言**。换渲染器不该把那条决定悄悄推翻。
+
+   代价也量过：§17 取样里 `$…$` 共 24 次、**集中在 12 条中的 1 条**，
+   而 `\(…\)` 是 208 次 / 9 条、`\[…\]` 39 次 / 7 条。
+   丢掉的是长尾，换回来的是「中文里写价格不会炸」。
+
+   `$$…$$` 保留——两个美元符连着出现在散文里几乎不可能，且旧的 MATH_DELIMS 里就有它。
+   所以这三个定界符 = 旧实现支持的那三个，**能力没有减少，也没有偷偷增加**。 */
+const MATH_EXTENSIONS = [
+  {
+    name: "blockMathDollar",
+    level: "block",
+    start(src) { return src.indexOf("$$"); },
+    tokenizer(src) {
+      const match = /^\$\$([^$]+?)\$\$/s.exec(src);
+      if (match) return { type: "blockMathDollar", raw: match[0], text: match[1].trim() };
+      return undefined;
+    },
+    renderer(token) { return `<div class="mathblock">${renderTex(token.text, true)}</div>`; },
+  },
+  {
+    name: "inlineMathLatex",
+    level: "inline",
+    start(src) { return src.indexOf("\\("); },
+    tokenizer(src) {
+      const match = /^\\\((.+?)\\\)/s.exec(src);
+      if (match) return { type: "inlineMathLatex", raw: match[0], text: match[1].trim() };
+      return undefined;
+    },
+    renderer(token) { return renderTex(token.text, false); },
+  },
+  {
+    name: "blockMathLatex",
+    level: "block",
+    start(src) { return src.indexOf("\\["); },
+    tokenizer(src) {
+      const match = /^\\\[(.+?)\\\]/s.exec(src);
+      if (match) return { type: "blockMathLatex", raw: match[0], text: match[1].trim() };
+      return undefined;
+    },
+    renderer(token) { return `<div class="mathblock">${renderTex(token.text, true)}</div>`; },
+  },
+];
+
+/* 这一条是我们自己的，上游没有：`[[wikilink]]`。
+   别名形态 `[[目标|显示]]`——**显示后半段、链到前半段**，
+   与上游 normalizeWikiLink 取 `|` 前半段作目标一致（wiki-links.ts:15）。
+   data-link 必须放**目标**：drawDoc 靠它去 catalog 里找页、判断是不是幻影链接。 */
+const WIKILINK_EXTENSION = {
+  name: "wikilink",
+  level: "inline",
+  start(src) { return src.indexOf("[["); },
+  tokenizer(src) {
+    const match = /^\[\[([^\]]+)\]\]/.exec(src);
+    if (match) return { type: "wikilink", raw: match[0], text: match[1] };
+    return undefined;
+  },
+  renderer(token) {
+    const n = token.text;
+    const target = n.split("|")[0].trim();
+    const shown = n.includes("|") ? n.slice(n.indexOf("|") + 1).trim() : target;
+    return `<a class="wl" href="#" data-link="${esc(target)}">${esc(shown)}</a>`;
+  },
+};
+
+/** 扩展只注册一次。marked.use 是往实例上叠加的，重复注册会叠出多份同名扩展。 */
+let markedReady = false;
+function ensureMarked() {
+  if (typeof marked === "undefined") return null;   // 可选依赖没装
+  if (!markedReady) {
+    marked.use({ extensions: [...MATH_EXTENSIONS, WIKILINK_EXTENSION] });
+    markedReady = true;
+  }
+  return marked;
+}
+
+/** 抄自上游 MarkdownBlock.js:191-209，class 换成我们自己的（我们没有 tailwind）。 */
+function buildRenderer(m) {
+  const renderer = new m.Renderer();
+
+  const originalLink = renderer.link;
+  renderer.link = function (token) {
+    return originalLink.call(this, token).replace("<a ", '<a target="_blank" rel="noopener noreferrer" ');
+  };
+
+  // 表格包一层容器，窄屏里横向滚动而不是把版面撑破
+  const originalTable = renderer.table;
+  renderer.table = function (token) {
+    return `<div class="tbl">${originalTable.call(this, token)}</div>`;
+  };
+
+  // 一级标题即页面标题，页头已经显示过了——这条是旧 renderMd 的既有行为，保留
+  const originalHeading = renderer.heading;
+  renderer.heading = function (token) {
+    return token.depth === 1 ? "" : originalHeading.call(this, token);
+  };
+
+  return renderer;
+}
+
 /**
- * 跨行的行间公式要先摘出来。
+ * 正文 → HTML。**产物从不写回文件**，存盘走 S.body 那条路，磁盘字节不受影响。
  *
- * `renderMd` 按 \n 切行、每行包一个 <p>，所以一个跨三行的 \[ … \] 会被切进三个元素，
- * 而 auto-render **不跨元素合并**——它只在单个文本节点里找配对的定界符。
- * 结果就是三行都渲染不出来，还各自露着半个定界符。
- *
- * 做法：切行之前先扫一遍，把跨行的 \[…\] 与 $$…$$ 整块换成占位符，
- * 最后作为**单个** <div> 放回去。这是"先切数学、再跑 markdown"那个正确顺序的最小实现。
- *
- * 只处理**跨行**的：单行的 \[a\] 或 $$a$$ 本来就在一个 <p> 里，auto-render 接得住。
+ * marked 没装时退化成纯段落。**如实降级，不假装还能渲染**——
+ * 这是 polish-agent 那条既有纪律（不装也能跑）在前端的同一处应用。
  */
-function extractDisplayMath(src) {
-  const blocks = [];
-  // 占位符用 NUL 包起来。NUL 在 Markdown 正文里没有任何合法用途，
-  // 但**万一**真出现了（粘贴进来的二进制垃圾），它会冒充占位符，
-  // 最后被替换成 undefined。所以进门先剥掉。
-  //
-  // 这一步只影响**显示**：renderMd 的产物从不写回文件，
-  // 存盘走的是 S.body 那条路，磁盘字节不受影响。
-  src = src.replace(/\u0000/g, "");
-  const stash = (m) => {
-    blocks.push(m);
-    return `\u0000MATH${blocks.length - 1}\u0000`;
-  };
-  const out = src
-    .replace(/\\\[[\s\S]*?\\\]/g, (m) => (m.includes("\n") ? stash(m) : m))
-    .replace(/\$\$[\s\S]*?\$\$/g, (m) => (m.includes("\n") ? stash(m) : m));
-  return { text: out, blocks };
-}
-
 function renderMd(src) {
-  const { text, blocks } = extractDisplayMath(src);
-  src = text;
-  const out = []; let items = null;
-  const inline = (t) => esc(t)
-    // 别名 [[目标|显示]]：**显示后半段、链到前半段**。
-    // 上游 normalizeWikiLink 取的是 `|` 前半段作为目标（wiki-links.ts:15），
-    // 而这里原先把整个「目标|显示」都显示出来了——§12 记过这个 bug。
-    // data-link 必须放**目标**，drawDoc 靠它去 catalog 里找页、判断是不是幻影链接。
-    .replace(/\[\[([^\]]+)\]\]/g, (_, n) => {
-      const target = n.split("|")[0].trim();
-      const shown = n.includes("|") ? n.slice(n.indexOf("|") + 1).trim() : target;
-      return `<a class="wl" href="#" data-link="${esc(target)}">${esc(shown)}</a>`;
-    })
-    .replace(/`([^`]+)`/g, "<code>$1</code>")
-    .replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>");
-
-  // 按缩进层级把连续的列表项组装成嵌套列表（Tab 记作 4 空格）
-  const nest = (list) => {
-    let i = 0;
-    const build = (level) => {
-      const tag = list[i].tag;
-      let s = `<${tag}>`;
-      while (i < list.length && list[i].indent >= level) {
-        if (list[i].indent > level) { s += build(list[i].indent); continue; }
-        s += `<li>${list[i].html}`;
-        i++;
-        if (i < list.length && list[i].indent > level) s += build(list[i].indent);
-        s += `</li>`;
-      }
-      return s + `</${tag}>`;
-    };
-    return build(list[0].indent);
-  };
-  const flush = () => { if (items) { out.push(nest(items)); items = null; } };
-
-  for (const raw of src.split("\n")) {
-    const line = raw.replace(/\t/g, "    ").trimEnd();
-    if (!line.trim()) { flush(); continue; }
-    const indent = line.length - line.trimStart().length;
-    const body = line.trimStart();
-    let m;
-    if ((m = body.match(/^(#{1,5})\s+(.*)/)) && indent === 0) {
-      flush();
-      const lvl = m[1].length;
-      if (lvl === 1) continue;                   // 一级标题即页面标题，已在页头显示
-      out.push(`<h${lvl}>${inline(m[2])}</h${lvl}>`);
-    } else if ((m = body.match(/^(\d+)\.\s+(.*)/))) {
-      (items ??= []).push({ indent, tag: "ol", html: inline(m[2]) });
-    } else if ((m = body.match(/^[-*]\s+(.*)/))) {
-      (items ??= []).push({ indent, tag: "ul", html: inline(m[1]) });
-    } else { flush(); out.push(`<p>${inline(line)}</p>`); }
+  const m = ensureMarked();
+  if (!m) {
+    return String(src).split("\n").filter((l) => l.trim())
+      .map((l) => `<p>${esc(l)}</p>`).join("");
   }
-  flush();
-  // 占位符换回整块公式。**不经过 esc()** 之外的处理——它是原样的 TeX，交给 KaTeX 去认。
-  // 用 <div> 而不是 <p>：它是块级公式，且必须整块落在**一个**元素里。
-  return out.join("").replace(/\u0000MATH(\d+)\u0000/g, (whole, i) => {
-    const block = blocks[Number(i)];
-    // 越界就原样留着。宁可显示一个奇怪的占位符，也不要产出 undefined
-    return block === undefined
-      ? whole
-      : `</p><div class="mathblock">${esc(block)}</div><p>`;
+  return m.parse(escapeHtmlKeepMarkdown(String(src)), {
+    async: false,
+    renderer: buildRenderer(m),
   });
 }
 
@@ -1202,7 +1314,6 @@ function drawDoc() {
     const md = document.createElement("div");
     md.className = "md";
     md.innerHTML = renderMd(S.body);
-    renderMath(md);
     doc.append(md);
     for (const a of md.querySelectorAll("a.wl")) {
       const t = S.catalog.pages.find((x) => x.title === a.dataset.link);
@@ -2403,7 +2514,6 @@ function openTutor() {
     const out = document.createElement("div");
     out.className = "out md";
     out.innerHTML = renderMd(g.src);
-    renderMath(out);
     right.append(out);
     demo.append(left, right);
     rule.append(demo);
@@ -2609,7 +2719,12 @@ function bindGraph() {
 }
 
 window.addEventListener("resize", drawGraph);
-boot();
+/* 挂 DOMContentLoaded，**不要**改回直接调 boot()。
+   marked 与 katex 是 <head> 里的 defer 脚本，而这段应用脚本是内联的、解析到就执行。
+   defer 保证在 DOMContentLoaded **之前**跑完，所以挂在这里全局对象一定就绪。
+   直接调 boot() 的话，首屏那次 renderMd 有可能赶在 marked 之前——
+   那是个偶发竞态：多数时候 fetch 的往返足够慢，掩盖住它。 */
+document.addEventListener("DOMContentLoaded", boot);
 </script>
 </body>
 </html>

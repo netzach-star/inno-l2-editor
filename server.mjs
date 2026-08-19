@@ -464,29 +464,41 @@ const server = createServer(async (req, res) => {
 			return res.end(html);
 		}
 
-		// KaTeX 的静态资源。这是这个服务**唯一**伺服的第三方文件。
+		// 第三方前端资源。这是这个服务**唯一**伺服的非自有文件，只有下面这两个包。
 		//
 		// 为什么要伺服而不是走 CDN：编辑器要能在没有外网的机器上跑
-		// （它编辑的是本地知识库，不该因为断网就渲染不出公式）。
+		// （它编辑的是本地知识库，不该因为断网就渲染不出公式和表格）。
 		//
-		// 为什么是 optionalDependency：沿用 polish-agent 那条既有纪律——
-		// **不装也能跑**。没装 katex 时这里 404，前端拿不到 renderMathInElement
-		// 就跳过渲染，公式原样显示（= 装之前的行为），其余功能一律不受影响。
-		if (req.method === "GET" && url.pathname.startsWith("/vendor/katex/")) {
-			const rel = url.pathname.slice("/vendor/katex/".length);
-			// 只放行 dist 下这几类，且必须落在 dist 里面——防路径穿越
+		// 为什么都是 optionalDependency：沿用 polish-agent 那条既有纪律——
+		// **不装也能跑**。没装时这里如实 404，前端拿不到全局对象就降级，
+		// 其余功能一律不受影响。降级到什么程度写在各自的 hint 里。
+		//
+		// marked 是 2026-08-17 加的（D-20）：上游经 mini-lit 用的就是它，
+		// 我们装同一个第三方库——不是依赖上游的包，两边没有依赖关系。
+		if (req.method === "GET" && url.pathname.startsWith("/vendor/")) {
+			const VENDOR = {
+				katex: { dir: ["katex", "dist"], hint: "katex 未安装（npm i katex），公式将原样显示" },
+				marked: { dir: ["marked", "lib"], hint: "marked 未安装（npm i marked），正文将退化为纯段落" },
+			};
+			const rest = url.pathname.slice("/vendor/".length);
+			const slash = rest.indexOf("/");
+			const pkg = slash < 0 ? "" : rest.slice(0, slash);
+			const rel = slash < 0 ? "" : rest.slice(slash + 1);
+			const spec = VENDOR[pkg];
+			if (!spec) return json(res, 404, { error: "未知的 vendor 包" });
+			// 只放行这几类扩展名，且必须落在包目录里面——防路径穿越
 			if (!/^[\w./-]+\.(js|css|woff2|woff|ttf)$/.test(rel) || rel.includes("..")) {
 				return json(res, 400, { error: "非法路径" });
 			}
-			const base = join(ROOT, "node_modules", "katex", "dist");
+			const base = join(ROOT, "node_modules", ...spec.dir);
 			const abs = join(base, rel);
 			if (relative(base, abs).startsWith("..")) return json(res, 400, { error: "非法路径" });
 			let buf;
 			try {
 				buf = await readFile(abs);
 			} catch {
-				// 没装 katex。如实 404，不伪造一个空文件让前端以为拿到了
-				return json(res, 404, { error: "katex 未安装（npm i katex），公式将原样显示" });
+				// 没装。如实 404，不伪造一个空文件让前端以为拿到了
+				return json(res, 404, { error: spec.hint });
 			}
 			const type = { js: "text/javascript", css: "text/css", woff2: "font/woff2",
 				woff: "font/woff", ttf: "font/ttf" }[rel.split(".").pop()];
