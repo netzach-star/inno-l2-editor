@@ -105,6 +105,143 @@
   .md a.wl:hover { border-bottom-color: var(--accent); }
   .md a.wl.missing { color: var(--text-subtle); border-bottom-style: dotted; }
 
+  /* ── 下面这些是 marked 接进来之后才可能出现的元素（D-20）。
+        在那之前它们一个都渲染不出来，所以以前也没有样式。 ── */
+  .md .tbl { overflow-x: auto; margin: .9rem 0; border: 1px solid var(--border); border-radius: 4px; }
+  .md table { border-collapse: collapse; width: 100%; font-size: .84rem; }
+  .md th, .md td { border-bottom: 1px solid var(--border); padding: .4rem .7rem; text-align: left; }
+  .md thead th { background: var(--surface-muted); font-weight: 600; color: var(--text); white-space: nowrap; }
+  .md tbody tr:last-child td { border-bottom: none; }
+  .md pre {
+    overflow-x: auto; margin: .9rem 0; padding: .8rem 1rem;
+    background: var(--surface-muted); border: 1px solid var(--border); border-radius: 4px;
+    font-family: var(--mono); font-size: .8rem; line-height: 1.7;
+  }
+  /* 代码块里的 code 不要再套一层行内 code 的底色和内边距 */
+  .md pre code { background: none; padding: 0; font-size: 1em; }
+  .md img { max-width: 100%; height: auto; border-radius: 4px; margin: .6rem 0; }
+  .md blockquote {
+    margin: .9rem 0; padding: .2rem 0 .2rem .9rem;
+    border-left: 3px solid var(--border-strong); color: var(--text-subtle);
+  }
+  .md hr { border: none; border-top: 1px solid var(--border); margin: 1.6rem 0; }
+  .md a:not(.wl) { color: var(--accent); text-decoration: none; border-bottom: 1px dotted var(--accent-soft); }
+  .md del { color: var(--text-subtle); }
+  .md .mathblock { overflow-x: auto; margin: 1rem 0; }
+  /* katex 没装或渲染失败时，公式原样显示成这个——如实标注，不假装渲染过（红线 3） */
+  .md .tex-raw { font-family: var(--mono); font-size: .84em; color: var(--text-subtle); }
+
+
+  /* ---------- 标签浏览器（§12 小项）---------- */
+  .tagCloud { display: flex; flex-wrap: wrap; gap: .3rem; padding: .2rem 1rem .7rem; }
+  .tagChip {
+    display: inline-flex; align-items: center; gap: .25rem;
+    border: 1px solid var(--border); background: var(--surface); color: var(--text-muted);
+    border-radius: 999px; padding: .1rem .5rem; font-size: .7rem; line-height: 1.6;
+  }
+  .tagChip:hover { border-color: var(--border-strong); color: var(--text); }
+  .tagChip.on { background: var(--accent); border-color: var(--accent); color: #fff; }
+  .tagChip .n { font-family: var(--mono); font-size: .62rem; opacity: .75; }
+  .tagHint {
+    padding: 0 1rem .5rem; font-size: .66rem; color: var(--text-subtle);
+  }
+
+  /* ---------- 页内查找 ---------- */
+  .findBar {
+    position: sticky; top: 0; z-index: 6;
+    display: flex; align-items: center; gap: .3rem;
+    margin: 0 0 .9rem; padding: .4rem .5rem;
+    background: var(--surface); border: 1px solid var(--border-strong); border-radius: 6px;
+    box-shadow: 0 2px 10px rgb(0 0 0 / .06);
+  }
+  .findBar input {
+    flex: 1; min-width: 0; border: none; outline: none; background: none;
+    color: var(--text); font-family: inherit; font-size: .84rem; padding: .1rem .2rem;
+  }
+  .findBar button { padding: .1rem .45rem; font-size: .8rem; line-height: 1.4; }
+  .findCount { font-family: var(--mono); font-size: .7rem; color: var(--text-subtle); white-space: nowrap; }
+  .findCount.none { color: var(--danger); }
+  mark.fx { background: color-mix(in srgb, var(--warning) 30%, transparent); color: inherit; border-radius: 2px; }
+  mark.fx.on { background: var(--warning); color: #fff; }
+
+  /* ---------- [[ ]] 链接补全 ---------- */
+  .editorWrap { position: relative; max-width: 42rem; }
+  .acBox {
+    position: absolute; z-index: 20; min-width: 11rem; max-width: 18rem;
+    background: var(--surface); border: 1px solid var(--border-strong); border-radius: 6px;
+    box-shadow: 0 6px 20px rgb(0 0 0 / .12); padding: .2rem; overflow: hidden;
+  }
+  .acItem {
+    display: flex; align-items: baseline; gap: .5rem; width: 100%;
+    border: none; background: none; color: var(--text); text-align: left;
+    padding: .25rem .45rem; border-radius: 4px; font-size: .8rem; line-height: 1.5;
+  }
+  .acItem small { margin-left: auto; color: var(--text-subtle); font-size: .66rem; }
+  .acItem:hover { background: var(--surface-muted); }
+  .acItem.on { background: var(--accent); color: #fff; }
+  .acItem.on small { color: rgb(255 255 255 / .8); }
+
+  /* ---------- U-B diff ---------- */
+  .diff {
+    white-space: pre-wrap; word-break: break-word;
+    font-size: .86rem; line-height: 1.85; color: var(--text);
+  }
+  /* 红绿之外再加形状：删除有删除线、新增有下划线。
+     只靠颜色区分对色觉障碍不友好，而这两处正是「必须看清改了什么」的地方 */
+  .diff .dDel {
+    background: color-mix(in srgb, var(--danger) 14%, transparent);
+    color: color-mix(in srgb, var(--danger) 78%, var(--text));
+    text-decoration: line-through; text-decoration-thickness: 1px;
+    border-radius: 2px; padding: 0 .05em;
+  }
+  .diff .dIns {
+    background: color-mix(in srgb, var(--success) 16%, transparent);
+    color: color-mix(in srgb, var(--success) 78%, var(--text));
+    text-decoration: underline; text-underline-offset: 2px;
+    border-radius: 2px; padding: 0 .05em;
+  }
+  .diffHead {
+    display: flex; align-items: center; gap: .6rem; flex-wrap: wrap;
+    margin-bottom: .5rem; font-size: .72rem; color: var(--text-subtle);
+  }
+  .diffHead .k { font-family: var(--mono); }
+  .diffHead .k.add { color: var(--success); }
+  .diffHead .k.del { color: var(--danger); }
+  .diffHead .grow { flex: 1; }
+  .diffNote {
+    margin-top: .6rem; font-size: .72rem; color: var(--text-subtle);
+    border-left: 2px solid var(--border-strong); padding-left: .6rem;
+  }
+  .diffBox {
+    border: 1px solid var(--border); border-radius: 6px;
+    background: var(--surface); padding: .7rem .9rem; max-height: 22rem; overflow-y: auto;
+  }
+  /* 条目级 diff（「重新整理」用） */
+  .itemDiff { display: flex; flex-direction: column; gap: .4rem; margin-top: .6rem; }
+  .itemRow {
+    display: flex; gap: .5rem; align-items: flex-start;
+    border: 1px solid var(--border); border-radius: 5px; padding: .45rem .6rem; background: var(--surface);
+  }
+  .itemRow .badge {
+    flex: none; font-size: .64rem; font-family: var(--mono); border-radius: 3px;
+    padding: .05rem .3rem; line-height: 1.6; border: 1px solid transparent;
+  }
+  .itemRow.added .badge { color: var(--success); border-color: color-mix(in srgb, var(--success) 40%, transparent); }
+  .itemRow.removed .badge { color: var(--danger); border-color: color-mix(in srgb, var(--danger) 40%, transparent); }
+  .itemRow.changed .badge { color: var(--warning); border-color: color-mix(in srgb, var(--warning) 40%, transparent); }
+  .itemRow.same { opacity: .55; }
+  .itemRow.same .badge { color: var(--text-subtle); border-color: var(--border); }
+  .itemRow .txt { min-width: 0; font-size: .8rem; line-height: 1.7; }
+
+  /* ---------- 类型选择（U-I）---------- */
+  .typePick { display: flex; gap: .35rem; }
+  .typePick button {
+    border: 1px solid var(--border); background: var(--surface); color: var(--text-muted);
+    border-radius: 5px; padding: .2rem .7rem; font-size: .78rem;
+  }
+  .typePick button.on { background: var(--accent); border-color: var(--accent); color: #fff; }
+  .typeHint { font-size: .68rem; color: var(--text-subtle); margin-top: .25rem; }
+
   .editor {
     width: 100%; max-width: 42rem; min-height: 24rem; resize: vertical;
     border: 1px solid var(--border-strong); border-radius: 4px; background: var(--surface); color: var(--text);
@@ -570,16 +707,25 @@
 </style>
 
 <!--
-  KaTeX。**可选依赖**——没装就 404，前端拿不到 renderMathInElement 便跳过渲染，
-  公式原样显示（= 装之前的行为），其余功能一律不受影响。
-  沿用 polish-agent 那条既有纪律：不装也能跑。
+  两个可选依赖。**没装就 404，前端降级，不崩**——沿用 polish-agent 那条既有纪律。
+
+  · marked  —— Markdown 编译器。**上游（经 mini-lit）用的就是它**，我们装同一个
+               第三方库，而不是依赖上游的包（D-20）。没装时正文退化成纯段落。
+  · katex   —— 公式渲染。没装时公式原样显示。
+               注意这里**不再引 auto-render**：公式改由 marked 的 tokenizer 认
+               （四个扩展抄自上游 MarkdownBlock.js），块级公式天然跨行，
+               不再需要「先摘块再放回」那段预处理。
 
   为什么伺服本地而不是 CDN：这个编辑器改的是本地知识库，
-  不该因为断网就渲染不出公式。
+  不该因为断网就渲染不出公式和表格。
+
+  **顺序要紧**：这两个是 defer，而下面那段应用脚本是内联的、解析时就执行。
+  defer 在 DOMContentLoaded **之前**跑完，所以 boot() 挂在 DOMContentLoaded 上，
+  见文件末尾。别改回直接调 boot()——那是一个会偶发的竞态。
 -->
 <link rel="stylesheet" href="/vendor/katex/katex.min.css">
 <script defer src="/vendor/katex/katex.min.js"></script>
-<script defer src="/vendor/katex/contrib/auto-render.min.js"></script>
+<script defer src="/vendor/marked/marked.umd.js"></script>
 </head>
 <body>
 
@@ -635,7 +781,7 @@ const S = {
   collapsed: new Set(), theme: localStorage.getItem("theme") || "light",
   graph: null,
   // U-E：搜索与类型过滤
-  q: "", search: null, searching: false, typeFilter: null, qTimer: null,
+  q: "", search: null, searching: false, typeFilter: null, tagFilter: null, qTimer: null,
   // §12：status / confidence 现在可改（服务端一直支持，缺的是入口）
   status: "", confidence: "",
 };
@@ -670,141 +816,714 @@ const TYPE_LABEL = { "source-summary": "资料摘要", concept: "概念", entity
 const anchored = (f) => f.anchor !== undefined && f.anchor !== "none";
 const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
 
-/* ---------------- 数学公式（KaTeX） ----------------
-   为什么是"渲染完 HTML 再扫 DOM"，而不是像上游那样在字符串管线里处理：
+/* ---------------- Markdown 渲染（marked） ----------------
+   D-20：编译器不自己写，用**上游正在用的那个**。上游经 mini-lit 用 marked，
+   我们装同一个第三方库（optionalDependency，和 katex 一样）。
+   注意口径：是「装同一个第三方库 + 复制粘贴它的配置代码」，
+   **不是**依赖 `mini-lit` / `pi-web-ui` 这两个上游的包——两边没有依赖关系。
 
-   上游 `normalizeMarkdownMath` 有 138 行，**全部**在解决一个它自己造出来的问题——
-   它的渲染器在 KaTeX 之前就把 `<` 转义成了 `&lt;`，于是要手工把
-   `&lt;`→`\lt`、`&le;`→`\le` 一路转回 TeX 命令。
-   我们走 DOM 后处理，`&lt;` 在进 DOM 那一刻就被浏览器解码回真正的 `<` 了，
-   **这个坑天然不踩**。照搬那 138 行等于抄一副治别人病的药——
-   复用上游的是**能力**，不是它的补丁。
+   下面这些抄自上游 `@mariozechner/mini-lit/dist/MarkdownBlock.js`：
+   · escapeHtmlKeepMarkdown  ← 第 32–56 行，逻辑一字未改
+   · 四个数学扩展            ← 第 57–190 行，只改了出错时的 class 名与一处解码（见下）
+   · 链接开新窗 / 表格包容器  ← 第 191–209 行，class 换成我们自己的
 
-   还有两个白捡的便宜：
-   · `renderMd` 的 inline() 只做 [[链接]] / `代码` / **粗体** 三件事，
-     **不处理 `_斜体_` 也不处理单个 `*`** —— 而那两个正是 markdown 吃掉 TeX 的主要途径
-     （`$a_1$` 在全功能渲染器里会被下划线规则拆掉，得专门加插件保护）。简陋在这里是优势。
-   · auto-render 的**默认定界符本来就不含单个 `$`**（只有 `$$` `\(` `\[` `\begin{}`），
-     而取样出来的分布正好是 `\(…\)` 208 次占主导、`$…$` 只有 24 次且集中在 1 条。
-     多数项目接 markdown-math 要改配置才不漏九成公式，**我们用默认配置就是对的**。 */
-const MATH_DELIMS = [
-  { left: "\\[", right: "\\]", display: true },
-  { left: "$$", right: "$$", display: true },
-  { left: "\\(", right: "\\)", display: false },
-];
+   **没抄的两块**：
+   · 第 210–237 行把代码块换成 mini-lit 自己的 `<code-block>` 元素——我们没有那个元素，
+     保留 marked 原本吐的 `<pre><code>`；
+   · 第 12–31、238–257 行的 lit 外壳——那是「怎么把 HTML 挂上页面」，我们本来就有。
 
-/** 把一个已经填好 innerHTML 的元素里的公式渲染掉。没装 KaTeX 就安静跳过。 */
-function renderMath(el) {
-  if (typeof renderMathInElement !== "function") return;   // 可选依赖没装
+   **我们自己加的只有一条**：`[[wikilink]]` 行内扩展。这是本项目的专有语法，marked 不认。
+
+   ── 公式为什么不再走 auto-render ──
+   以前是「渲染完 HTML 再扫 DOM」，而旧 renderMd 按行切 <p>，跨三行的 \[…\] 会被切进
+   三个元素、auto-render 又不跨元素合并，所以得先摘块再放回（那段预处理已随本次改动删掉）。
+   marked 的**块级 tokenizer 天然跨行**，这个坑从根上不存在。 */
+
+/**
+ * 抄自上游 MarkdownBlock.js:32-56：先把代码块换成占位符，再转义 HTML 标签，最后还原。
+ *
+ * **为什么需要这一步**：marked 默认**原样输出裸 HTML**，而这里的正文来自 AI 产出与
+ * 用户粘贴，不该让它往页面里注入标签。旧 renderMd 是对每行做 esc()（全量转义），
+ * 换成 marked 之后不能再那么干——那会把 markdown 语法本身也转义掉。
+ * 上游这套的取舍正好合适：**只转义标签，放过 markdown 记号。**
+ *
+ * ⚠️ 如实标注它的边界（红线 3）：它挡的是 `<tag …>` 形态。
+ * HTML 注释 `<!-- -->`、以及后面跟着非空白字符的孤立 `<`（如 `a<b`）不在它的匹配里。
+ * 前者被浏览器当注释不显示，后者最终由 marked 自己转义成文本。
+ * **这不是一个完备的消毒器**——它和上游是同一套、同一个强度。
+ * 我们复用上游的能力，也就一并继承它的边界，这一条要写出来而不是假装没有。
+ */
+function escapeHtmlKeepMarkdown(src) {
+  const codeBlocks = [];
+  let out = String(src).replace(/```[\s\S]*?```|`[^`\n]+`/g, (match) => {
+    codeBlocks.push(match);
+    return `__CODE_BLOCK_${codeBlocks.length - 1}__`;
+  });
+  out = out
+    .replace(/<(\w+)([^>]*)>/g, "&lt;$1$2&gt;")
+    .replace(/<\/(\w+)>/g, "&lt;/$1&gt;")
+    .replace(/<(\w+)([^>]*)\s*\/>/g, "&lt;$1$2/&gt;")
+    .replace(/<(?![^\s])/g, "&lt;");
+  codeBlocks.forEach((block, index) => {
+    out = out.replace(`__CODE_BLOCK_${index}__`, () => block);
+  });
+  return out;
+}
+
+/**
+ * 把上一步引入的实体还原回 TeX。**这两行是 D-18 那 138 行的最小必要残留。**
+ *
+ * D-18 当时判断「上游 normalizeMarkdownMath 那 138 行是在治它自己的病，我们天然不踩」——
+ * 那个判断在**走 DOM 后处理**时是对的（`&lt;` 进 DOM 就被浏览器解码回 `<` 了）。
+ * 但公式改由 tokenizer 认之后，token.text 是**字符串**，没有 DOM 那一步解码，
+ * 于是同一个坑又出现了：`\(a < b\)` 经上面那步会变成 `\(a &lt; b\)`，KaTeX 会照着渲染出实体。
+ *
+ * 所以这里补上还原。**只还原 `&lt;` / `&gt;` 这两个**——因为上一步只可能产出这两个；
+ * `&` 从未被转义，所以源码里的 `&amp;` 是用户自己写的字面量（TeX 里 `\&` 合法），碰不得。
+ *
+ * 换句话说：那 138 行里真正对我们成立的只有 2 行，其余 136 行仍然是别人的药。
+ */
+function unescapeTex(text) {
+  return String(text).replace(/&lt;/g, "<").replace(/&gt;/g, ">");
+}
+
+/** 公式渲染。katex 没装时不抛错，原样把 TeX 显示出来（可选依赖纪律）。 */
+function renderTex(tex, displayMode) {
   try {
-    renderMathInElement(el, {
-      delimiters: MATH_DELIMS,
-      // code / pre 自动豁免——上游那个手写的"跳过围栏代码块"逻辑，我们靠 DOM 结构白拿
-      ignoredTags: ["script", "noscript", "style", "textarea", "pre", "code"],
+    return katex.renderToString(unescapeTex(tex), {
       throwOnError: false,
+      displayMode,
+      output: "html",
     });
   } catch (err) {
-    // 渲染失败不能把整页带崩：公式原样留着比白屏强
-    console.warn("KaTeX 渲染失败，公式将原样显示", err);
+    // 没装 katex 会走到这里（ReferenceError），渲染失败也走这里。
+    // 两种情况都**原样显示 TeX**——比白屏或者悄悄吞掉一段公式强。
+    console.warn("KaTeX 未就绪或渲染失败，公式原样显示", err);
+    return `<span class="tex-raw">${esc(tex)}</span>`;
   }
 }
 
-/* ---------------- Markdown 渲染（一～五级标题、有序/无序列表、行内标记） ---------------- */
+/* 数学扩展，抄自上游 MarkdownBlock.js:57-190。上游有四个，**我们只注册三个。**
+
+   ── 一处有意的偏离：不认行内的单个 `$` ──
+   上游那个 `inlineMathDollar` 会把 `$…$` 当公式。抄过来实测，
+   中文正文里的「价格 $100 到 $200」**当场被吃成一条公式**
+   （KaTeX 还会为此报 unicodeTextInMathMode）。
+
+   这不是新发现，是 D-18 早就定过的口径：当时选 auto-render 的默认定界符
+   （本来就不含单个 `$`），并**为此写了一条断言**。换渲染器不该把那条决定悄悄推翻。
+
+   代价也量过：§17 取样里 `$…$` 共 24 次、**集中在 12 条中的 1 条**，
+   而 `\(…\)` 是 208 次 / 9 条、`\[…\]` 39 次 / 7 条。
+   丢掉的是长尾，换回来的是「中文里写价格不会炸」。
+
+   `$$…$$` 保留——两个美元符连着出现在散文里几乎不可能，且旧的 MATH_DELIMS 里就有它。
+   所以这三个定界符 = 旧实现支持的那三个，**能力没有减少，也没有偷偷增加**。 */
+const MATH_EXTENSIONS = [
+  {
+    name: "blockMathDollar",
+    level: "block",
+    start(src) { return src.indexOf("$$"); },
+    tokenizer(src) {
+      const match = /^\$\$([^$]+?)\$\$/s.exec(src);
+      if (match) return { type: "blockMathDollar", raw: match[0], text: match[1].trim() };
+      return undefined;
+    },
+    renderer(token) { return `<div class="mathblock">${renderTex(token.text, true)}</div>`; },
+  },
+  {
+    name: "inlineMathLatex",
+    level: "inline",
+    start(src) { return src.indexOf("\\("); },
+    tokenizer(src) {
+      const match = /^\\\((.+?)\\\)/s.exec(src);
+      if (match) return { type: "inlineMathLatex", raw: match[0], text: match[1].trim() };
+      return undefined;
+    },
+    renderer(token) { return renderTex(token.text, false); },
+  },
+  {
+    name: "blockMathLatex",
+    level: "block",
+    start(src) { return src.indexOf("\\["); },
+    tokenizer(src) {
+      const match = /^\\\[(.+?)\\\]/s.exec(src);
+      if (match) return { type: "blockMathLatex", raw: match[0], text: match[1].trim() };
+      return undefined;
+    },
+    renderer(token) { return `<div class="mathblock">${renderTex(token.text, true)}</div>`; },
+  },
+];
+
+/* 这一条是我们自己的，上游没有：`[[wikilink]]`。
+   别名形态 `[[目标|显示]]`——**显示后半段、链到前半段**，
+   与上游 normalizeWikiLink 取 `|` 前半段作目标一致（wiki-links.ts:15）。
+   data-link 必须放**目标**：drawDoc 靠它去 catalog 里找页、判断是不是幻影链接。 */
+const WIKILINK_EXTENSION = {
+  name: "wikilink",
+  level: "inline",
+  start(src) { return src.indexOf("[["); },
+  tokenizer(src) {
+    const match = /^\[\[([^\]]+)\]\]/.exec(src);
+    if (match) return { type: "wikilink", raw: match[0], text: match[1] };
+    return undefined;
+  },
+  renderer(token) {
+    const n = token.text;
+    const target = n.split("|")[0].trim();
+    const shown = n.includes("|") ? n.slice(n.indexOf("|") + 1).trim() : target;
+    return `<a class="wl" href="#" data-link="${esc(target)}">${esc(shown)}</a>`;
+  },
+};
+
+/** 扩展只注册一次。marked.use 是往实例上叠加的，重复注册会叠出多份同名扩展。 */
+let markedReady = false;
+function ensureMarked() {
+  if (typeof marked === "undefined") return null;   // 可选依赖没装
+  if (!markedReady) {
+    marked.use({ extensions: [...MATH_EXTENSIONS, WIKILINK_EXTENSION] });
+    markedReady = true;
+  }
+  return marked;
+}
+
+/** 抄自上游 MarkdownBlock.js:191-209，class 换成我们自己的（我们没有 tailwind）。 */
+function buildRenderer(m) {
+  const renderer = new m.Renderer();
+
+  const originalLink = renderer.link;
+  renderer.link = function (token) {
+    return originalLink.call(this, token).replace("<a ", '<a target="_blank" rel="noopener noreferrer" ');
+  };
+
+  // 表格包一层容器，窄屏里横向滚动而不是把版面撑破
+  const originalTable = renderer.table;
+  renderer.table = function (token) {
+    return `<div class="tbl">${originalTable.call(this, token)}</div>`;
+  };
+
+  // 一级标题即页面标题，页头已经显示过了——这条是旧 renderMd 的既有行为，保留
+  const originalHeading = renderer.heading;
+  renderer.heading = function (token) {
+    return token.depth === 1 ? "" : originalHeading.call(this, token);
+  };
+
+  return renderer;
+}
+
 /**
- * 跨行的行间公式要先摘出来。
+ * 正文 → HTML。**产物从不写回文件**，存盘走 S.body 那条路，磁盘字节不受影响。
  *
- * `renderMd` 按 \n 切行、每行包一个 <p>，所以一个跨三行的 \[ … \] 会被切进三个元素，
- * 而 auto-render **不跨元素合并**——它只在单个文本节点里找配对的定界符。
- * 结果就是三行都渲染不出来，还各自露着半个定界符。
- *
- * 做法：切行之前先扫一遍，把跨行的 \[…\] 与 $$…$$ 整块换成占位符，
- * 最后作为**单个** <div> 放回去。这是"先切数学、再跑 markdown"那个正确顺序的最小实现。
- *
- * 只处理**跨行**的：单行的 \[a\] 或 $$a$$ 本来就在一个 <p> 里，auto-render 接得住。
+ * marked 没装时退化成纯段落。**如实降级，不假装还能渲染**——
+ * 这是 polish-agent 那条既有纪律（不装也能跑）在前端的同一处应用。
  */
-function extractDisplayMath(src) {
-  const blocks = [];
-  // 占位符用 NUL 包起来。NUL 在 Markdown 正文里没有任何合法用途，
-  // 但**万一**真出现了（粘贴进来的二进制垃圾），它会冒充占位符，
-  // 最后被替换成 undefined。所以进门先剥掉。
-  //
-  // 这一步只影响**显示**：renderMd 的产物从不写回文件，
-  // 存盘走的是 S.body 那条路，磁盘字节不受影响。
-  src = src.replace(/\u0000/g, "");
-  const stash = (m) => {
-    blocks.push(m);
-    return `\u0000MATH${blocks.length - 1}\u0000`;
-  };
-  const out = src
-    .replace(/\\\[[\s\S]*?\\\]/g, (m) => (m.includes("\n") ? stash(m) : m))
-    .replace(/\$\$[\s\S]*?\$\$/g, (m) => (m.includes("\n") ? stash(m) : m));
-  return { text: out, blocks };
-}
-
 function renderMd(src) {
-  const { text, blocks } = extractDisplayMath(src);
-  src = text;
-  const out = []; let items = null;
-  const inline = (t) => esc(t)
-    // 别名 [[目标|显示]]：**显示后半段、链到前半段**。
-    // 上游 normalizeWikiLink 取的是 `|` 前半段作为目标（wiki-links.ts:15），
-    // 而这里原先把整个「目标|显示」都显示出来了——§12 记过这个 bug。
-    // data-link 必须放**目标**，drawDoc 靠它去 catalog 里找页、判断是不是幻影链接。
-    .replace(/\[\[([^\]]+)\]\]/g, (_, n) => {
-      const target = n.split("|")[0].trim();
-      const shown = n.includes("|") ? n.slice(n.indexOf("|") + 1).trim() : target;
-      return `<a class="wl" href="#" data-link="${esc(target)}">${esc(shown)}</a>`;
-    })
-    .replace(/`([^`]+)`/g, "<code>$1</code>")
-    .replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>");
-
-  // 按缩进层级把连续的列表项组装成嵌套列表（Tab 记作 4 空格）
-  const nest = (list) => {
-    let i = 0;
-    const build = (level) => {
-      const tag = list[i].tag;
-      let s = `<${tag}>`;
-      while (i < list.length && list[i].indent >= level) {
-        if (list[i].indent > level) { s += build(list[i].indent); continue; }
-        s += `<li>${list[i].html}`;
-        i++;
-        if (i < list.length && list[i].indent > level) s += build(list[i].indent);
-        s += `</li>`;
-      }
-      return s + `</${tag}>`;
-    };
-    return build(list[0].indent);
-  };
-  const flush = () => { if (items) { out.push(nest(items)); items = null; } };
-
-  for (const raw of src.split("\n")) {
-    const line = raw.replace(/\t/g, "    ").trimEnd();
-    if (!line.trim()) { flush(); continue; }
-    const indent = line.length - line.trimStart().length;
-    const body = line.trimStart();
-    let m;
-    if ((m = body.match(/^(#{1,5})\s+(.*)/)) && indent === 0) {
-      flush();
-      const lvl = m[1].length;
-      if (lvl === 1) continue;                   // 一级标题即页面标题，已在页头显示
-      out.push(`<h${lvl}>${inline(m[2])}</h${lvl}>`);
-    } else if ((m = body.match(/^(\d+)\.\s+(.*)/))) {
-      (items ??= []).push({ indent, tag: "ol", html: inline(m[2]) });
-    } else if ((m = body.match(/^[-*]\s+(.*)/))) {
-      (items ??= []).push({ indent, tag: "ul", html: inline(m[1]) });
-    } else { flush(); out.push(`<p>${inline(line)}</p>`); }
+  const m = ensureMarked();
+  if (!m) {
+    return String(src).split("\n").filter((l) => l.trim())
+      .map((l) => `<p>${esc(l)}</p>`).join("");
   }
-  flush();
-  // 占位符换回整块公式。**不经过 esc()** 之外的处理——它是原样的 TeX，交给 KaTeX 去认。
-  // 用 <div> 而不是 <p>：它是块级公式，且必须整块落在**一个**元素里。
-  return out.join("").replace(/\u0000MATH(\d+)\u0000/g, (whole, i) => {
-    const block = blocks[Number(i)];
-    // 越界就原样留着。宁可显示一个奇怪的占位符，也不要产出 undefined
-    return block === undefined
-      ? whole
-      : `</p><div class="mathblock">${esc(block)}</div><p>`;
+  return m.parse(escapeHtmlKeepMarkdown(String(src)), {
+    async: false,
+    renderer: buildRenderer(m),
   });
 }
+
+/* ================= 撤销 / 重做 =================
+   §17 把它列进「编辑安全」，并特意点出浏览器给 textarea 的默认撤销
+   **覆盖不到标签与关联面板**——而那恰恰是本项目的主要交互。
+   所以这里做的是**整页状态的快照栈**，不是 textarea 的字符级栈：
+   加一个标签、删一条关联、改 status，都能一步退回去。
+
+   为什么是快照而不是命令栈：状态一共就五个字段（正文 + 标签 + 关联 +
+   status + confidence），一份快照几 KB，一百步也才几百 KB。
+   命令栈要为每种操作写一对 do/undo，是这个规模不需要的复杂度。 */
+const HISTORY = { undo: [], redo: [], lastAt: 0, MAX: 100 };
+
+function snapshot() {
+  return {
+    body: S.body, tags: [...S.tags], links: [...S.links],
+    status: S.status, confidence: S.confidence,
+  };
+}
+function sameSnap(a, b) {
+  return a.body === b.body && a.status === b.status && a.confidence === b.confidence
+    && a.tags.join("") === b.tags.join("")
+    && a.links.join("") === b.links.join("");
+}
+
+/**
+ * **在改动之前**调用，把当前状态压进撤销栈。
+ *
+ * `coalesceMs > 0` 时做合并：连续打字不该产生一步一个快照
+ * （那样 ⌘Z 一次只退一个字，等于没有）。面板操作传 0，每次都是一步。
+ */
+function mark(coalesceMs = 0) {
+  const now = Date.now();
+  const top = HISTORY.undo[HISTORY.undo.length - 1];
+  if (top && coalesceMs > 0 && now - HISTORY.lastAt < coalesceMs) { HISTORY.lastAt = now; return; }
+  const snap = snapshot();
+  if (top && sameSnap(top, snap)) { HISTORY.lastAt = now; return; }
+  HISTORY.undo.push(snap);
+  if (HISTORY.undo.length > HISTORY.MAX) HISTORY.undo.shift();
+  HISTORY.redo.length = 0;          // 新的分叉，重做栈作废
+  HISTORY.lastAt = now;
+}
+
+function applySnap(s) {
+  S.body = s.body; S.tags = [...s.tags]; S.links = [...s.links];
+  S.status = s.status; S.confidence = s.confidence;
+  S.dirty = true;
+  drawDoc(); drawSide(); drawGraph();
+}
+
+function undo() {
+  if (!HISTORY.undo.length) return flash("没有可撤销的改动了");
+  HISTORY.redo.push(snapshot());
+  applySnap(HISTORY.undo.pop());
+  HISTORY.lastAt = 0;               // 撤销之后不要再和上一次打字合并
+}
+function redo() {
+  if (!HISTORY.redo.length) return flash("没有可重做的改动了");
+  HISTORY.undo.push(snapshot());
+  applySnap(HISTORY.redo.pop());
+  HISTORY.lastAt = 0;
+}
+/** 换页面就是换文档，历史不能跨页——否则在 A 页 ⌘Z 会把 B 页的内容写进来。 */
+function resetHistory() { HISTORY.undo.length = 0; HISTORY.redo.length = 0; HISTORY.lastAt = 0; }
+
+/* ================= 页内查找 =================
+   浏览器自带的 Ctrl+F 只能找到**渲染态里可见的**那部分：
+   编辑态整篇正文在 textarea 里，源码里的东西它一个都找不到。
+   所以两种形态各走各的：阅读态走文本节点高亮，编辑态走 textarea 选区。 */
+const FIND = { open: false, q: "", idx: 0, marks: [], hits: [] };
+
+function openFind() {
+  FIND.open = true;
+  drawDoc();
+  setTimeout(() => { const i = $("findInput"); if (i) { i.focus(); i.select(); } }, 0);
+}
+function closeFind() {
+  FIND.open = false; FIND.q = ""; FIND.idx = 0; FIND.marks = []; FIND.hits = [];
+  drawDoc();
+}
+
+/** 查找条。阅读态和编辑态共用一个，差别只在怎么定位。 */
+function findBar() {
+  const bar = document.createElement("div");
+  bar.className = "findBar";
+  const input = document.createElement("input");
+  input.id = "findInput"; input.type = "text"; input.placeholder = "在本页查找";
+  input.value = FIND.q;
+  const count = document.createElement("span");
+  count.className = "findCount";
+  const paint = () => {
+    const n = S.editing ? FIND.hits.length : FIND.marks.length;
+    count.textContent = !FIND.q ? "" : n ? `${FIND.idx + 1}/${n}` : "无结果";
+    count.classList.toggle("none", Boolean(FIND.q) && !n);
+  };
+  input.oninput = () => { FIND.q = input.value; FIND.idx = 0; locate(); paint(); };
+  input.onkeydown = (e) => {
+    if (e.key === "Enter") { e.preventDefault(); step(e.shiftKey ? -1 : 1); paint(); }
+    else if (e.key === "Escape") { e.preventDefault(); closeFind(); }
+  };
+  const prev = document.createElement("button");
+  prev.type = "button"; prev.className = "ghost"; prev.textContent = "↑"; prev.title = "上一个";
+  prev.onclick = () => { step(-1); paint(); };
+  const next = document.createElement("button");
+  next.type = "button"; next.className = "ghost"; next.textContent = "↓"; next.title = "下一个";
+  next.onclick = () => { step(1); paint(); };
+  const close = document.createElement("button");
+  close.type = "button"; close.className = "ghost"; close.textContent = "×"; close.title = "关闭（Esc）";
+  close.onclick = closeFind;
+  bar.append(input, count, prev, next, close);
+  setTimeout(() => { locate(); paint(); }, 0);
+  return bar;
+}
+
+/** 重新算命中位置。阅读态给 DOM 打 mark，编辑态只记字符偏移。 */
+function locate() {
+  FIND.marks = []; FIND.hits = [];
+  const q = FIND.q;
+  if (!q) { clearMarks(); return; }
+  if (S.editing) {
+    const hay = S.body.toLowerCase(), needle = q.toLowerCase();
+    let at = hay.indexOf(needle);
+    while (at !== -1) { FIND.hits.push(at); at = hay.indexOf(needle, at + Math.max(1, needle.length)); }
+    if (FIND.idx >= FIND.hits.length) FIND.idx = 0;
+    focusHit();
+  } else {
+    const root = $("doc").querySelector(".md");
+    if (root) { clearMarks(); FIND.marks = paintMarks(root, q); }
+    if (FIND.idx >= FIND.marks.length) FIND.idx = 0;
+    focusHit();
+  }
+}
+
+function clearMarks() {
+  for (const m of $("doc").querySelectorAll("mark.fx")) {
+    m.replaceWith(document.createTextNode(m.textContent));
+  }
+  // 拆开的相邻文本节点合起来，免得下一轮查找跨节点漏命中
+  const root = $("doc").querySelector(".md");
+  if (root) root.normalize();
+}
+
+/**
+ * 在文本节点里打高亮。**不碰 innerHTML**——
+ * 用正则往渲染好的 HTML 上贴标签会把属性也命中，是经典的自伤。
+ */
+function paintMarks(root, q) {
+  const needle = q.toLowerCase();
+  const out = [];
+  const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, {
+    acceptNode: (n) => (n.nodeValue.toLowerCase().includes(needle)
+      ? NodeFilter.FILTER_ACCEPT : NodeFilter.FILTER_REJECT),
+  });
+  const targets = [];
+  while (walker.nextNode()) targets.push(walker.currentNode);
+  for (const node of targets) {
+    const text = node.nodeValue;
+    const frag = document.createDocumentFragment();
+    let from = 0, at = text.toLowerCase().indexOf(needle);
+    while (at !== -1) {
+      if (at > from) frag.append(text.slice(from, at));
+      const m = document.createElement("mark");
+      m.className = "fx";
+      m.textContent = text.slice(at, at + q.length);
+      frag.append(m);
+      out.push(m);
+      from = at + q.length;
+      at = text.toLowerCase().indexOf(needle, from);
+    }
+    if (from < text.length) frag.append(text.slice(from));
+    node.replaceWith(frag);
+  }
+  return out;
+}
+
+function step(dir) {
+  const n = S.editing ? FIND.hits.length : FIND.marks.length;
+  if (!n) return;
+  FIND.idx = (FIND.idx + dir + n) % n;
+  focusHit();
+}
+
+function focusHit() {
+  if (S.editing) {
+    const at = FIND.hits[FIND.idx];
+    if (at === undefined) return;
+    const ta = $("doc").querySelector("textarea.editor");
+    if (!ta) return;
+    ta.focus();
+    ta.setSelectionRange(at, at + FIND.q.length);
+    // 让命中大致居中：textarea 没有 scrollIntoView，按行高估算
+    const line = S.body.slice(0, at).split("\n").length - 1;
+    const lh = parseFloat(getComputedStyle(ta).lineHeight) || 20;
+    ta.scrollTop = Math.max(0, line * lh - ta.clientHeight / 2);
+  } else {
+    FIND.marks.forEach((m, i) => m.classList.toggle("on", i === FIND.idx));
+    FIND.marks[FIND.idx]?.scrollIntoView({ block: "center", behavior: "smooth" });
+  }
+}
+
+/* ================= 正文里的 [[ ]] 链接补全 =================
+   §17：「补全是维护成本的关键，没有它用户记不住页名」。
+   补的是**已有页名**——补不出来的说明那一页还不存在，
+   这时候用户照样可以写下去，正文里会留一个幻影链接（红线 3：不伪造能力）。 */
+const AC = { open: false, items: [], idx: 0, from: -1 };
+
+/** 光标是不是正落在一个没闭合的 `[[` 里；是的话返回已经打了的那几个字。 */
+function acContext(value, caret) {
+  const open = value.lastIndexOf("[[", caret - 1);
+  if (open === -1) return null;
+  const between = value.slice(open + 2, caret);
+  if (between.includes("]]") || between.includes("\n") || between.includes("[[")) return null;
+  return { from: open + 2, q: between };
+}
+
+function acMatch(q) {
+  const needle = q.trim().toLowerCase();
+  const pages = S.catalog.pages
+    .filter((p) => !S.page || p.path !== S.page.path)   // 不补到自己
+    .map((p) => ({ title: p.title, type: p.type }));
+  const hit = pages.filter((t) => !needle || t.title.toLowerCase().includes(needle));
+  // 前缀命中排在包含命中前面——用户打的通常是开头
+  hit.sort((a, b) => {
+    const ap = a.title.toLowerCase().startsWith(needle) ? 0 : 1;
+    const bp = b.title.toLowerCase().startsWith(needle) ? 0 : 1;
+    return ap - bp || a.title.localeCompare(b.title, "zh");
+  });
+  return hit.slice(0, 8);
+}
+
+function acClose() {
+  AC.open = false; AC.items = []; AC.idx = 0; AC.from = -1;
+  $("acBox")?.remove();
+}
+
+function acUpdate(ta) {
+  const ctx = acContext(ta.value, ta.selectionStart);
+  if (!ctx) return acClose();
+  AC.items = acMatch(ctx.q);
+  AC.from = ctx.from;
+  if (!AC.items.length) return acClose();
+  AC.open = true;
+  if (AC.idx >= AC.items.length) AC.idx = 0;
+  acDraw(ta);
+}
+
+function acDraw(ta) {
+  let box = $("acBox");
+  if (!box) {
+    box = document.createElement("div");
+    box.id = "acBox"; box.className = "acBox";
+    ta.parentElement.append(box);
+  }
+  box.innerHTML = "";
+  AC.items.forEach((it, i) => {
+    const b = document.createElement("button");
+    b.type = "button";
+    b.className = "acItem" + (i === AC.idx ? " on" : "");
+    b.innerHTML = `<span>${esc(it.title)}</span><small>${esc(TYPE_LABEL[it.type] ?? it.type)}</small>`;
+    // mousedown 而不是 click：click 之前 textarea 会先失焦，选区就没了
+    b.onmousedown = (e) => { e.preventDefault(); acAccept(ta, i); };
+    box.append(b);
+  });
+  const xy = caretXY(ta);
+  box.style.left = `${Math.max(0, Math.min(xy.x, ta.clientWidth - 190))}px`;
+  box.style.top = `${xy.y}px`;
+}
+
+function acAccept(ta, i) {
+  const it = AC.items[i ?? AC.idx];
+  if (!it) return;
+  mark();                                   // 补全是一步可撤销的改动
+  const caret = ta.selectionStart;
+  const after = ta.value.slice(caret);
+  const closed = after.startsWith("]]");    // 已经有右括号就不要再补一对
+  const insert = it.title + (closed ? "" : "]]");
+  ta.value = ta.value.slice(0, AC.from) + insert + after;
+  const pos = AC.from + insert.length + (closed ? 2 : 0);
+  ta.selectionStart = ta.selectionEnd = pos;
+  S.body = ta.value;
+  S.dirty = true;
+  acClose();
+  drawSide(); drawGraph();
+  ta.focus();
+}
+
+/**
+ * 光标在 textarea 里的像素位置。
+ * 做法是造一个样式完全相同的镜像 div，把光标前的文本放进去，
+ * 末尾插一个空 span 去量它的位置——textarea 本身不暴露这个信息。
+ */
+function caretXY(ta) {
+  const mirror = document.createElement("div");
+  const cs = getComputedStyle(ta);
+  for (const k of ["fontFamily", "fontSize", "fontWeight", "lineHeight", "letterSpacing",
+    "paddingTop", "paddingRight", "paddingBottom", "paddingLeft",
+    "borderTopWidth", "borderLeftWidth"]) mirror.style[k] = cs[k];
+  mirror.style.position = "absolute";
+  mirror.style.visibility = "hidden";
+  mirror.style.whiteSpace = "pre-wrap";
+  mirror.style.wordWrap = "break-word";
+  mirror.style.width = `${ta.clientWidth}px`;
+  mirror.textContent = ta.value.slice(0, ta.selectionStart);
+  const span = document.createElement("span");
+  span.textContent = "​";
+  mirror.append(span);
+  ta.parentElement.append(mirror);
+  const x = span.offsetLeft, y = span.offsetTop + (parseFloat(cs.lineHeight) || 20);
+  mirror.remove();
+  return { x, y: y - ta.scrollTop };
+}
+
+/* ================= U-B：改动可见（diff） =================
+   §2。零依赖的 LCS 字级 diff。三条来自设计的口径，逐条落在下面：
+
+   ① **按字比对**，不按词不按句——汉字本身就是语义单位，删一个字就是删一个词素；
+      英文按字符 diff 才有噪声，中文没有这个问题。
+   ② **吸收**：两处改动之间只隔 ≤2 个字（常是「，」「与」这类）时，把中间那截也算进改动。
+      不吸收会出现「全微分、与隐函数定理」里那种一个字一个字闪烁的效果。
+   ③ **降级**：相似度低于 40%（模型整段重写了）就不 diff，退回并排。
+      那种情况满屏红绿等于没信息。
+
+   规模护栏：LCS 是 O(n×m)。设计说润色上限 4000 字、最坏 1600 万次比较、
+   JS 里几十毫秒可接受。超过这个量级就先按句切，再在句级上做 LCS——
+   **宁可粒度粗一点，也不要卡住界面**。 */
+const DIFF_CELL_CAP = 4000000;
+const ABSORB_GAP = 2;
+const DIFF_MIN_SIMILARITY = 0.4;
+
+/** 通用 LCS，token 数组进、操作序列出。ops: {t:"="|"-"|"+", v:[…tokens]} */
+function lcsOps(A, B) {
+  const n = A.length, m = B.length;
+  if (!n && !m) return [];
+  if (!n) return [{ t: "+", v: [...B] }];
+  if (!m) return [{ t: "-", v: [...A] }];
+  // DP 表用 Uint32Array：4000×4000 的普通数组是几十 MB，typed array 只要 64 MB/4
+  const w = m + 1;
+  const dp = new Uint32Array((n + 1) * w);
+  for (let i = n - 1; i >= 0; i--) {
+    for (let j = m - 1; j >= 0; j--) {
+      dp[i * w + j] = A[i] === B[j]
+        ? dp[(i + 1) * w + (j + 1)] + 1
+        : Math.max(dp[(i + 1) * w + j], dp[i * w + (j + 1)]);
+    }
+  }
+  const ops = [];
+  const push = (t, v) => {
+    const last = ops[ops.length - 1];
+    if (last && last.t === t) last.v.push(v); else ops.push({ t, v: [v] });
+  };
+  let i = 0, j = 0;
+  while (i < n && j < m) {
+    if (A[i] === B[j]) { push("=", A[i]); i++; j++; }
+    else if (dp[(i + 1) * w + j] >= dp[i * w + (j + 1)]) { push("-", A[i]); i++; }
+    else { push("+", B[j]); j++; }
+  }
+  while (i < n) { push("-", A[i]); i++; }
+  while (j < m) { push("+", B[j]); j++; }
+  return ops;
+}
+
+/** ② 吸收：把夹在两处改动之间的短「相同」段也算成改动。 */
+function absorb(ops, gap = ABSORB_GAP) {
+  const out = [];
+  for (let i = 0; i < ops.length; i++) {
+    const cur = ops[i];
+    const prevChanged = out.length > 0 && out[out.length - 1].t !== "=";
+    const nextChanged = i + 1 < ops.length && ops[i + 1].t !== "=";
+    if (cur.t === "=" && cur.v.length <= gap && prevChanged && nextChanged) {
+      out.push({ t: "-", v: [...cur.v] }, { t: "+", v: [...cur.v] });
+    } else out.push({ t: cur.t, v: [...cur.v] });
+  }
+  // 合并同类项，免得出现一串相邻的同型段
+  const merged = [];
+  for (const op of out) {
+    const last = merged[merged.length - 1];
+    if (last && last.t === op.t) last.v.push(...op.v); else merged.push(op);
+  }
+  return merged;
+}
+
+/** 把两段文本切成 diff 的最小单位。超大输入退回句级，见规模护栏。 */
+function diffTokens(a, b) {
+  const ca = [...a], cb = [...b];
+  if (ca.length * cb.length <= DIFF_CELL_CAP) return { A: ca, B: cb, unit: "char" };
+  const split = (s) => s.split(/(?<=[。！？；\n.!?;])/).filter(Boolean);
+  return { A: split(a), B: split(b), unit: "sentence" };
+}
+
+/**
+ * 主入口。返回 { ops, similarity, unit, degraded }。
+ * `degraded` 为真时**不要画 diff**，按 ③ 退回并排显示。
+ */
+function diffText(a, b) {
+  const sa = String(a ?? ""), sb = String(b ?? "");
+  const { A, B, unit } = diffTokens(sa, sb);
+  const ops = absorb(lcsOps(A, B));
+  let same = 0;
+  for (const op of ops) if (op.t === "=") same += op.v.join("").length;
+  const total = sa.length + sb.length;
+  const similarity = total === 0 ? 1 : (2 * same) / total;
+  return { ops, similarity, unit, degraded: similarity < DIFF_MIN_SIMILARITY };
+}
+
+/** 把 ops 画成单栏 diff。删除加删除线、新增加底色，四套主题下都可读。 */
+function diffEl(ops) {
+  const box = document.createElement("div");
+  box.className = "diff";
+  for (const op of ops) {
+    const text = op.v.join("");
+    if (!text) continue;
+    if (op.t === "=") { box.append(document.createTextNode(text)); continue; }
+    const s = document.createElement("span");
+    s.className = op.t === "-" ? "dDel" : "dIns";
+    s.textContent = text;
+    box.append(s);
+  }
+  return box;
+}
+
+/** 一行「改了多少」的账，放在 diff 上方——先给结论，再给细节。 */
+function diffTally(r) {
+  let add = 0, del = 0;
+  for (const o of r.ops) {
+    if (o.t === "+") add += o.v.join("").length;
+    else if (o.t === "-") del += o.v.join("").length;
+  }
+  return { add, del, pct: Math.round(r.similarity * 100) };
+}
+
+/**
+ * 条目级 diff，给「重新整理」用。
+ * §2：一个 5 条要点的草稿做整段字级 diff 会很难读，所以**先按条目**
+ * （哪条新增 / 删除 / 改了），条目内部再按字。
+ *
+ * 配对办法：对每条旧要点，在还没被认领的新要点里找相似度最高的那条；
+ * 高于阈值算「同一条被改了」，否则算一删一增。
+ */
+function diffItems(oldList, newList, pairMin = 0.5) {
+  const rows = [];
+  const takenNew = new Set();
+  for (const before of oldList) {
+    let best = -1, bestScore = 0;
+    newList.forEach((after, i) => {
+      if (takenNew.has(i)) return;
+      if (before === after) { best = i; bestScore = 1; return; }
+      if (bestScore === 1) return;
+      const s = diffText(before, after).similarity;
+      if (s > bestScore) { bestScore = s; best = i; }
+    });
+    if (best >= 0 && bestScore >= pairMin) {
+      takenNew.add(best);
+      rows.push(bestScore === 1 || before === newList[best]
+        ? { kind: "same", before, after: newList[best] }
+        : { kind: "changed", before, after: newList[best] });
+    } else rows.push({ kind: "removed", before, after: null });
+  }
+  newList.forEach((after, i) => {
+    if (!takenNew.has(i)) rows.push({ kind: "added", before: null, after });
+  });
+  return rows;
+}
+
+/* ---------------- 全局快捷键 ----------------
+   ⌘Z / ⌘⇧Z 走**我们自己的**历史，连 textarea 里也拦下来。
+   为什么不放过 textarea 让浏览器原生撤销接管：那样会出现两套互不知情的历史——
+   在正文里 ⌘Z 退一个字、在面板上 ⌘Z 退一整步，而且原生撤销改的是 DOM 值、
+   S.body 不会跟着回退，状态当场对不上。**一套历史，覆盖全部。**
+
+   例外：搜索框、picker 的输入框这些不是文档内容，放给浏览器自己处理。 */
+function isScratchInput(el) {
+  return el instanceof HTMLInputElement && !el.closest(".findBar");
+}
+
+document.addEventListener("keydown", (e) => {
+  const mod = e.metaKey || e.ctrlKey;
+  if (!mod) return;
+  const key = e.key.toLowerCase();
+
+  if (key === "z" && !isScratchInput(e.target)) {
+    // 弹窗开着的时候不接管：那时候用户改的是弹窗里的输入，不是这一页
+    if (document.querySelector("dialog[open]")) return;
+    e.preventDefault();
+    e.shiftKey ? redo() : undo();
+    return;
+  }
+  if (key === "y" && !isScratchInput(e.target)) {      // Windows 习惯
+    if (document.querySelector("dialog[open]")) return;
+    e.preventDefault(); redo(); return;
+  }
+  if (key === "f") {
+    if (document.querySelector("dialog[open]")) return;
+    if (!S.page) return;
+    e.preventDefault();
+    FIND.open ? (document.getElementById("findInput")?.focus(), document.getElementById("findInput")?.select()) : openFind();
+  }
+});
 
 /* ---------------- 启动 ---------------- */
 async function boot() {
@@ -959,16 +1678,45 @@ function drawNav() {
     b.onclick = () => { S.typeFilter = S.typeFilter === id ? null : id; drawNav(); };
     pills.append(b);
   };
-  mk(null, "全部", S.catalog.pages.length);
+  // 计数要跟着标签筛子走：筛了标签还显示全库页数，数字和列出来的对不上
+  const inTag = (p) => !S.tagFilter || p.tags.includes(S.tagFilter);
+  mk(null, "全部", S.catalog.pages.filter(inTag).length);
   for (const [type, label] of Object.entries(TYPE_LABEL)) {
-    const n = S.catalog.pages.filter((p) => p.type === type).length;
+    const n = S.catalog.pages.filter((p) => p.type === type && inTag(p)).length;
     if (n) mk(type, label, n);
   }
   nav.append(pills);
 
+  // 标签浏览器（§12）：catalog 里一直有 tag 计数，但以前点不了。
+  // 点一个标签就把列表筛成"用了这个标签的页"，再点一次取消。
+  // 与类型过滤是**并存**的两把筛子，不是互斥的——用户可能想看"概念里带某标签的"。
+  if (S.catalog.tags.length) {
+    const cloud = document.createElement("div");
+    cloud.className = "tagCloud";
+    for (const t of S.catalog.tags) {
+      const b = document.createElement("button");
+      b.type = "button";
+      b.className = "tagChip" + (S.tagFilter === t.name ? " on" : "");
+      b.innerHTML = `<span>${esc(t.name)}</span><span class="n">${t.count}</span>`;
+      b.title = `${t.count} 页在用`;
+      b.onclick = () => { S.tagFilter = S.tagFilter === t.name ? null : t.name; drawNav(); };
+      cloud.append(b);
+    }
+    nav.append(cloud);
+    if (S.tagFilter) {
+      const hint = document.createElement("div");
+      hint.className = "tagHint";
+      const n = S.catalog.pages.filter((p) => p.tags.includes(S.tagFilter)).length;
+      hint.textContent = `按标签「${S.tagFilter}」筛出 ${n} 页 · 再点一次取消`;
+      nav.append(hint);
+    }
+  }
+
+  const byTag = (p) => !S.tagFilter || p.tags.includes(S.tagFilter);
+
   for (const [type, label] of Object.entries(TYPE_LABEL)) {
     if (S.typeFilter && S.typeFilter !== type) continue;
-    const items = S.catalog.pages.filter((p) => p.type === type);
+    const items = S.catalog.pages.filter((p) => p.type === type && byTag(p));
     if (!items.length) continue;
     const closed = S.collapsed.has(type);
     const head = document.createElement("button");
@@ -990,6 +1738,9 @@ function drawNav() {
 
 /* ---------------- 中：文档（阅读 / 编辑） ---------------- */
 async function open(path) {
+  // 换页 = 换文档：撤销历史、查找、补全都不能跨页带过去
+  resetHistory(); acClose();
+  if (FIND.open) { FIND.q = ""; FIND.idx = 0; FIND.marks = []; FIND.hits = []; }
   if (S.dirty && !confirm("有未保存的改动，确定离开？")) return;
   S.page = await (await fetch(`/api/page?path=${encodeURIComponent(path)}`)).json();
   S.tags = [...S.page.tags]; S.links = [...S.page.links]; S.body = S.page.body;
@@ -1050,8 +1801,8 @@ function propsBar() {
     return wrap;
   };
 
-  bar.append(mkSelect("状态", p.status, STATUS_OPTS, (v) => { S.status = v; touch(); }));
-  bar.append(mkSelect("可信度", p.confidence, CONF_OPTS, (v) => { S.confidence = v; touch(); },
+  bar.append(mkSelect("状态", p.status, STATUS_OPTS, (v) => { mark(); S.status = v; touch(); }));
+  bar.append(mkSelect("可信度", p.confidence, CONF_OPTS, (v) => { mark(); S.confidence = v; touch(); },
     (v) => (CONF_OPTS.find((o) => o[0] === v)?.[2] ?? "未标注可信度")));
 
   // ── 来源溯源 ──
@@ -1149,32 +1900,52 @@ function drawDoc() {
   doc.append(head);
   doc.append(propsBar());
 
+  if (FIND.open) doc.append(findBar());
+
   if (S.editing) {
+    // 补全面板要相对 textarea 定位，所以包一层
+    const wrap = document.createElement("div");
+    wrap.className = "editorWrap";
     const ta = document.createElement("textarea");
     ta.className = "editor";
     ta.value = S.body;
     ta.spellcheck = false;
-    ta.oninput = () => { S.body = ta.value; if (!S.dirty) { S.dirty = true; drawSide(); } };
+    ta.oninput = () => {
+      mark(700);                                // 连续打字合并成一步，见 mark()
+      S.body = ta.value;
+      if (!S.dirty) { S.dirty = true; drawSide(); }
+      acUpdate(ta);
+    };
     ta.onkeydown = (e) => {
+      // 补全面板开着时，方向键与回车归它
+      if (AC.open) {
+        if (e.key === "ArrowDown") { e.preventDefault(); AC.idx = (AC.idx + 1) % AC.items.length; return acDraw(ta); }
+        if (e.key === "ArrowUp") { e.preventDefault(); AC.idx = (AC.idx - 1 + AC.items.length) % AC.items.length; return acDraw(ta); }
+        if (e.key === "Enter" || e.key === "Tab") { e.preventDefault(); return acAccept(ta); }
+        if (e.key === "Escape") { e.preventDefault(); return acClose(); }
+      }
       if (e.key !== "Tab") return;              // Tab 缩进，不跳焦点
       e.preventDefault();
+      mark();
       const { selectionStart: a, selectionEnd: b } = ta;
       ta.value = ta.value.slice(0, a) + "\t" + ta.value.slice(b);
       ta.selectionStart = ta.selectionEnd = a + 1;
       S.body = ta.value; if (!S.dirty) { S.dirty = true; drawSide(); }
     };
-    // 选区一变，下方的润色按钮就跟着变状态
-    const refresh = () => setTimeout(updatePolishFab, 0);
+    // 选区一变，下方的润色按钮就跟着变状态；顺便更新补全（光标挪出 [[ ]] 就该收起来）
+    const refresh = () => setTimeout(() => { updatePolishFab(); acUpdate(ta); }, 0);
     ta.onmouseup = refresh;
     ta.onkeyup = refresh;
     ta.onselect = refresh;
-    doc.append(ta);
+    ta.onblur = () => setTimeout(acClose, 120);
+    wrap.append(ta);
+    doc.append(wrap);
     const hint = document.createElement("div");
     hint.className = "hint";
     hint.innerHTML = `<span><b>#</b> 标题，一到五级</span>
       <span><b>1.</b> 序号，Tab 缩进</span>
       <span><b>-</b> 要点</span>
-      <span><b>[[页面名]]</b> 链到别的页</span>`;
+      <span><b>[[页面名]]</b> 链到别的页，打 <b>[[</b> 有补全</span>`;
     const more = document.createElement("a");
     more.href = "#"; more.textContent = "看教程 →";
     more.style.cssText = "color:var(--accent);text-decoration:none";
@@ -1202,7 +1973,6 @@ function drawDoc() {
     const md = document.createElement("div");
     md.className = "md";
     md.innerHTML = renderMd(S.body);
-    renderMath(md);
     doc.append(md);
     for (const a of md.querySelectorAll("a.wl")) {
       const t = S.catalog.pages.find((x) => x.title === a.dataset.link);
@@ -1347,7 +2117,7 @@ function section(title, items, onRemove, kind, fromBody = []) {
     el.innerHTML = `<span>${esc(it)}</span>`;
     const b = document.createElement("button");
     b.type = "button"; b.textContent = "×"; b.title = "移除";
-    b.onclick = () => onRemove(it);
+    b.onclick = () => { mark(); onRemove(it); };   // 删一个标签/关联也是可撤销的一步
     el.append(b);
     chips.append(el);
   }
@@ -1419,6 +2189,7 @@ function picker(kind) {
 }
 
 function pick(kind, value) {
+  mark();                                   // 面板操作每次都是独立的一步
   if (kind === "tag") { if (!S.tags.includes(value)) S.tags.push(value); }
   else if (!S.links.includes(value)) S.links.push(value);
   S.picking = null;
@@ -1731,12 +2502,16 @@ $("cfg").onclick = (e) => { if (e.target.id === "cfg") $("cfg").close(); };
 
 const G = { step: "pick", sources: [], sourceId: null, busy: false, error: null,
             draft: null, stats: null, meta: null, topic: "", instruction: "", picked: new Set(),
-            mode: "file", segs: [""], pasteTitle: "" };
+            mode: "file", segs: [""], pasteTitle: "",
+            type: "concept",        // U-I：写盘前可改，只有 concept / entity 两个值
+            prev: null,             // 上一版草稿，「重新整理」之后拿它做条目 diff
+            diffOpen: false };
 
 async function openGen() {
   G.step = "pick"; G.error = null; G.draft = null; G.sourceId = null;
   G.topic = ""; G.instruction = ""; G.picked = new Set();
   G.mode = "file"; G.segs = [""]; G.pasteTitle = "";
+  G.type = "concept"; G.prev = null;
   $("gen").showModal();
   drawGen();
   await loadSources();
@@ -1791,6 +2566,9 @@ async function ingestFile(file) {
 }
 
 async function runCompile() {
+  // 「重新整理」之前把这一版留着，下面画条目 diff 要用（U-B / §2）
+  G.prev = G.draft ? { title: G.draft.title, summary: G.draft.summary,
+                       facts: G.draft.facts.map((f) => f.text) } : null;
   G.busy = true; G.error = null; G.draft = null; G.step = "review"; drawGen();
   try {
     const r = await fetch("/api/compile", {
@@ -1825,6 +2603,7 @@ async function saveGenerated() {
       body: JSON.stringify({
         sourceId: G.sourceId, title: G.draft.title, summary: G.draft.summary,
         tags: G.draft.tags, links: G.draft.links, facts,
+        type: G.type,        // U-I：服务端与 bridge 早就认这个字段，缺的一直是界面
       }),
     });
     const out = await r.json();
@@ -2049,6 +2828,91 @@ function drawTopicAndGo(box) {
   box.append(bar);
 }
 
+/**
+ * 「重新整理」之后的条目级 diff（U-B / §2 的第二处用法）。
+ *
+ * 为什么是两层粒度：一个 5 条要点的草稿做整段字级 diff 会很难读。
+ * 所以**先按条目**说清楚哪条新增 / 删除 / 改了，条目内部再按字。
+ */
+function draftDiffBox() {
+  const wrap = document.createElement("div");
+  wrap.className = "genField";
+
+  const rows = diffItems(G.prev.facts, G.draft.facts.map((f) => f.text));
+  const n = { added: 0, removed: 0, changed: 0, same: 0 };
+  for (const r of rows) n[r.kind]++;
+
+  const head = document.createElement("div");
+  head.className = "diffHead";
+  head.innerHTML = `<b style="color:var(--text)">这一版改了什么</b>
+    <span class="k add">+${n.added} 条新增</span>
+    <span class="k del">−${n.removed} 条删除</span>
+    <span class="k">${n.changed} 条改写</span>
+    <span class="k">${n.same} 条没动</span>`;
+  const toggle = document.createElement("button");
+  toggle.type = "button"; toggle.className = "ghost";
+  toggle.textContent = G.diffOpen ? "收起" : "逐条看";
+  toggle.onclick = () => { G.diffOpen = !G.diffOpen; drawGen(); };
+  head.append(document.createElement("span")).className = "grow";
+  head.append(toggle);
+  wrap.append(head);
+
+  // 标题与一句话说明也可能被改了，它们不在要点里，单独说一句
+  const metaChanged = [];
+  if (G.prev.title !== G.draft.title) metaChanged.push("标题");
+  if (G.prev.summary !== G.draft.summary) metaChanged.push("一句话说明");
+  if (metaChanged.length) {
+    const m = document.createElement("div");
+    m.className = "diffNote";
+    m.textContent = `另外 ${metaChanged.join("、")} 也变了。`;
+    wrap.append(m);
+  }
+
+  if (!G.diffOpen) return wrap;
+
+  const list = document.createElement("div");
+  list.className = "itemDiff";
+  const LABEL = { added: "新增", removed: "删除", changed: "改写", same: "未动" };
+  for (const r of rows) {
+    const row = document.createElement("div");
+    row.className = `itemRow ${r.kind}`;
+    const badge = document.createElement("span");
+    badge.className = "badge"; badge.textContent = LABEL[r.kind];
+    const txt = document.createElement("div");
+    txt.className = "txt";
+    if (r.kind === "changed") {
+      const d = diffText(r.before, r.after);
+      // 条目内部整段重写时也降级：满屏红绿等于没信息（§2 的第三条口径）
+      if (d.degraded) {
+        txt.innerHTML = `<div style="color:var(--text-subtle);font-size:.72rem">整条重写，不逐字标了</div>`;
+        const before = document.createElement("div");
+        before.className = "diff";
+        const del = document.createElement("span");
+        del.className = "dDel"; del.textContent = r.before;
+        before.append(del);
+        const after = document.createElement("div");
+        after.className = "diff";
+        const ins = document.createElement("span");
+        ins.className = "dIns"; ins.textContent = r.after;
+        after.append(ins);
+        txt.append(before, after);
+      } else txt.append(diffEl(d.ops));
+    } else if (r.kind === "added") {
+      const s2 = document.createElement("span");
+      s2.className = "dIns"; s2.textContent = r.after;
+      txt.append(s2);
+    } else if (r.kind === "removed") {
+      const s2 = document.createElement("span");
+      s2.className = "dDel"; s2.textContent = r.before;
+      txt.append(s2);
+    } else txt.textContent = r.after;
+    row.append(badge, txt);
+    list.append(row);
+  }
+  wrap.append(list);
+  return wrap;
+}
+
 function drawGenReview(box) {
   if (G.busy && !G.draft) {
     const s = document.createElement("div");
@@ -2090,6 +2954,41 @@ function drawGenReview(box) {
     f.append(el);
     box.append(f);
   }
+
+  // U-I：类型判错时在**写盘前**改。上游 l2_archive 自带 entity/concept 分类器
+  // （wiki-linker.ts 的 LinkablePageType），但它判错时以前没有任何补救入口。
+  // 只放 concept / entity 两个值——analysis 是另一种编译（输入是多个已有页面），
+  // 按 §9 不进本版。改 type 会连带改目录，那一步在上游 locatePage 里已经做了。
+  {
+    const tf = document.createElement("div");
+    tf.className = "genField";
+    tf.innerHTML = `<label>类型</label>`;
+    const pick = document.createElement("div");
+    pick.className = "typePick";
+    for (const [val, label, hint] of [
+      ["concept", "概念", "理论、方法、机制、题型"],
+      ["entity", "实体", "人、组织、产品、论文、定理名"],
+    ]) {
+      const b = document.createElement("button");
+      b.type = "button";
+      b.className = G.type === val ? "on" : "";
+      b.textContent = label;
+      b.title = hint;
+      b.onclick = () => { G.type = val; drawGen(); };
+      pick.append(b);
+    }
+    tf.append(pick);
+    const hint = document.createElement("div");
+    hint.className = "typeHint";
+    hint.textContent = G.type === "entity"
+      ? "写进 entities/：人、组织、产品、论文、定理名这类具名物"
+      : "写进 concepts/：理论、方法、机制、题型";
+    tf.append(hint);
+    box.append(tf);
+  }
+
+  // 「重新整理」之后：先说这一版动了哪几条，再让用户逐条看（U-B / §2）
+  if (G.prev) box.append(draftDiffBox());
 
   const lab = document.createElement("div");
   lab.className = "genField";
@@ -2196,16 +3095,18 @@ function updatePolishFab() {
   btn.querySelector(".lbl").textContent = n ? `让 AI 润色选中的 ${n} 字` : "选中一段文字，让 AI 润色";
 }
 
-const P = { sel: null, suggestion: null, busy: false, error: null, meta: null, instruction: "" };
+const P = { sel: null, suggestion: null, busy: false, error: null, meta: null, instruction: "",
+            showFull: false };   // U-B：默认看 diff，可切「看全文」
 
 function openPolish(sel) {
   P.sel = sel; P.suggestion = null; P.error = null; P.meta = null; P.instruction = "";
+  P.showFull = false;             // 每次打开都从 diff 视图开始
   $("polish").showModal();
   runPolish();
 }
 
 async function runPolish() {
-  P.busy = true; P.error = null; drawPolish();
+  P.busy = true; P.error = null; P.showFull = false; drawPolish();
   try {
     const r = await fetch("/api/polish", {
       method: "POST", headers: { "content-type": "application/json" },
@@ -2230,38 +3131,88 @@ function drawPolish() {
   const box = $("polishBody");
   box.innerHTML = "";
 
-  const row = document.createElement("div");
-  row.className = "pRow";
+  /* U-B（§2）：默认给**改动**，不再让用户自己在两个框里找哪里变了。
+     三条口径都在这里：字级 diff、吸收短间隔、相似度过低就退回并排。 */
+  const d = P.suggestion && !P.busy ? diffText(P.sel.text, P.suggestion) : null;
+  const sideBySide = !d || d.degraded || P.showFull;
 
-  const orig = document.createElement("div");
-  orig.className = "pBox";
-  orig.innerHTML = `<div class="cap"><span>你选中的原文</span><span>${P.sel.text.length} 字</span></div>`;
-  const opre = document.createElement("pre");
-  opre.textContent = P.sel.text;
-  orig.append(opre);
-
-  const sug = document.createElement("div");
-  sug.className = "pBox sug";
-  sug.innerHTML = `<div class="cap"><span>AI 的建议</span><span>${
-    P.suggestion ? P.suggestion.length + " 字" : "—"
-  }</span></div>`;
-  if (P.busy) {
-    const s = document.createElement("div");
-    s.className = "pState";
-    s.innerHTML = `<span class="spin"></span>子代理正在改写…`;
-    sug.append(s);
-  } else if (P.suggestion) {
-    const spre = document.createElement("pre");
-    spre.textContent = P.suggestion;
-    sug.append(spre);
-  } else {
-    const s = document.createElement("div");
-    s.className = "pState";
-    s.textContent = P.error ? "这次没拿到建议" : "—";
-    sug.append(s);
+  if (d && !d.degraded) {
+    const t = diffTally(d);
+    const head = document.createElement("div");
+    head.className = "diffHead";
+    head.innerHTML = `<b style="color:var(--text)">${P.showFull ? "全文" : "这次改了什么"}</b>
+      <span class="k add">+${t.add} 字</span>
+      <span class="k del">−${t.del} 字</span>
+      <span class="k">保留 ${t.pct}%</span>`;
+    const grow = document.createElement("span");
+    grow.className = "grow";
+    const toggle = document.createElement("button");
+    toggle.type = "button"; toggle.className = "ghost";
+    toggle.textContent = P.showFull ? "看改动" : "看全文";
+    toggle.onclick = () => { P.showFull = !P.showFull; drawPolish(); };
+    head.append(grow, toggle);
+    box.append(head);
   }
-  row.append(orig, sug);
-  box.append(row);
+
+  if (!sideBySide) {
+    const wrap = document.createElement("div");
+    wrap.className = "diffBox";
+    wrap.append(diffEl(d.ops));
+    box.append(wrap);
+    const note = document.createElement("div");
+    note.className = "diffNote";
+    note.innerHTML = `<span class="dDel">删除线</span> 是被拿掉的，<span class="dIns">下划线</span> 是新加的。
+      相邻改动之间只隔一两个字时会一起标出来——那样比一个字一个字闪要好读。`;
+    box.append(note);
+  } else {
+    const row = document.createElement("div");
+    row.className = "pRow";
+
+    const orig = document.createElement("div");
+    orig.className = "pBox";
+    orig.innerHTML = `<div class="cap"><span>你选中的原文</span><span>${P.sel.text.length} 字</span></div>`;
+    const opre = document.createElement("pre");
+    opre.textContent = P.sel.text;
+    orig.append(opre);
+
+    const sug = document.createElement("div");
+    sug.className = "pBox sug";
+    sug.innerHTML = `<div class="cap"><span>AI 的建议</span><span>${
+      P.suggestion ? P.suggestion.length + " 字" : "—"
+    }</span></div>`;
+    if (P.busy) {
+      const s = document.createElement("div");
+      s.className = "pState";
+      s.innerHTML = `<span class="spin"></span>子代理正在改写…`;
+      sug.append(s);
+    } else if (P.suggestion) {
+      const spre = document.createElement("pre");
+      spre.textContent = P.suggestion;
+      sug.append(spre);
+    } else {
+      const s = document.createElement("div");
+      s.className = "pState";
+      s.textContent = P.error ? "这次没拿到建议" : "—";
+      sug.append(s);
+    }
+    row.append(orig, sug);
+    box.append(row);
+
+    // 为什么这次没给 diff，要说清楚，不能让人以为功能坏了（红线 3）
+    if (d && d.degraded) {
+      const why = document.createElement("div");
+      why.className = "diffNote";
+      why.textContent = `这一版和原文只有 ${Math.round(d.similarity * 100)}% 相同，`
+        + `等于整段重写了 —— 逐字标出来会是满屏红绿，不如两边对着看。`;
+      box.append(why);
+    }
+    if (d && !d.degraded && P.showFull) {
+      const back = document.createElement("div");
+      back.className = "diffNote";
+      back.textContent = "这是全文对照。点右上角「看改动」回到 diff。";
+      box.append(back);
+    }
+  }
 
   // 如实报错：没配模型就说没配模型，不假装有结果（红线 3 / 5）
   if (P.error) {
@@ -2324,6 +3275,7 @@ function drawPolish() {
 }
 
 function acceptPolish() {
+  mark();                       // 采用是一步改动，⌘Z 要能退回去
   const { ta, start, end } = P.sel;
   // 以状态里的 body 为准做替换：弹窗打开期间 textarea 可能已被重绘
   const before = S.body.slice(0, start), after = S.body.slice(end);
@@ -2403,7 +3355,6 @@ function openTutor() {
     const out = document.createElement("div");
     out.className = "out md";
     out.innerHTML = renderMd(g.src);
-    renderMath(out);
     right.append(out);
     demo.append(left, right);
     rule.append(demo);
@@ -2609,7 +3560,12 @@ function bindGraph() {
 }
 
 window.addEventListener("resize", drawGraph);
-boot();
+/* 挂 DOMContentLoaded，**不要**改回直接调 boot()。
+   marked 与 katex 是 <head> 里的 defer 脚本，而这段应用脚本是内联的、解析到就执行。
+   defer 保证在 DOMContentLoaded **之前**跑完，所以挂在这里全局对象一定就绪。
+   直接调 boot() 的话，首屏那次 renderMd 有可能赶在 marked 之前——
+   那是个偶发竞态：多数时候 fetch 的往返足够慢，掩盖住它。 */
+document.addEventListener("DOMContentLoaded", boot);
 </script>
 </body>
 </html>

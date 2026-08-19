@@ -1,6 +1,6 @@
 {
 	"name": "inno-l2-editor",
-	"version": "2.0.0-batch1",
+	"version": "2.0.0",
 	"private": true,
 	"type": "module",
 	"description": "给 InnoSpark L2 Wiki 补一套更好的写入体验：AI 负责整理，用户负责决定。",
@@ -9,7 +9,8 @@
 	},
 	"optionalDependencies": {
 		"@earendil-works/pi-coding-agent": "^0.79.10",
-		"katex": "^0.18.4"
+		"katex": "^0.18.4",
+		"marked": "^16.4.2"
 	},
 	"engines": {
 		"node": ">=22.19.0"
