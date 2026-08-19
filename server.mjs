@@ -234,12 +234,19 @@ async function listPages() {
 			if (!name.endsWith(".md")) continue;
 			const rel = ["wiki", dir, name].join("/");
 			const raw = await readFile(join(WIKI, dir, name), "utf8");
-			const { fmLines } = splitFrontmatter(raw);
+			// 用 readFields 而不是本文件那个 readField + parseInlineArray：
+			// 后者**只认行内数组** `tags: [a, b]`，块序列 `tags:\n  - a` 会读成空。
+			// 上游写的是行内形态，所以一直没暴露；但用户手改过的页可能是块序列，
+			// 而 `/api/page` 那侧用的正是 readFields（两种都认）——
+			// 两个读取口径不一致，标签浏览器就会漏掉手写块序列的页。（2026-08-17）
+			const fields = readFields(raw);
+			const tags = Array.isArray(fields.tags) ? fields.tags
+				: (typeof fields.tags === "string" && fields.tags ? [fields.tags] : []);
 			pages.push({
 				path: rel,
-				title: readField(fmLines, "title") ?? name.replace(/\.md$/, ""),
-				type: readField(fmLines, "type") ?? dir,
-				tags: parseInlineArray(readField(fmLines, "tags")),
+				title: (typeof fields.title === "string" && fields.title) || name.replace(/\.md$/, ""),
+				type: (typeof fields.type === "string" && fields.type) || dir,
+				tags: tags.map((t) => String(t).trim()).filter(Boolean),
 			});
 		}
 	}

@@ -47,3 +47,33 @@ export async function freshMarked() {
 	const { Marked } = await import("marked");
 	return new Marked();
 }
+
+/**
+ * 把 index.html 里**纯函数**那几段抠出来（diff 引擎、补全的上下文判定、撤销栈的比较）。
+ *
+ * 这些函数不碰 DOM，所以在 Node 里可以直接跑。碰 DOM 的那些（acDraw / paintMarks /
+ * findBar）不在这里测——它们要浏览器，归实测那一档。
+ *
+ * 和 loadRenderer 一样按函数名定位：改名了立刻报错，不静默跳过。
+ */
+export async function loadPure() {
+	const html = await readFile(new URL("./index.html", import.meta.url), "utf8");
+	const pick = (startName, endNeedle) => {
+		const start = html.indexOf(startName);
+		if (start < 0) throw new Error(`index.html 里找不到 ${startName}——它被改名或重构了`);
+		const endAt = html.indexOf(endNeedle, start);
+		if (endAt < 0) throw new Error(`${startName} 的收尾锚点 ${endNeedle} 不见了`);
+		return html.slice(start, html.indexOf("\n}", endAt) + 2);
+	};
+	const code = [
+		pick("const DIFF_CELL_CAP", "return { add, del, pct"),
+		pick("function diffItems", "return rows;"),
+		pick("function acContext", "return { from: open + 2, q: between };"),
+		pick("function sameSnap", "&& a.links.join"),
+	].join("\n\n");
+	// eslint-disable-next-line no-new-func
+	return new Function(
+		`${code}\nreturn { lcsOps, absorb, diffTokens, diffText, diffTally, diffItems, acContext, sameSnap,
+			DIFF_CELL_CAP, ABSORB_GAP, DIFF_MIN_SIMILARITY };`,
+	)();
+}
