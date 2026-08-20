@@ -90,6 +90,9 @@ if (!target) {
 }
 const TARGET = target.replace(/\/+$/, "");
 
+// 锚点断了要能找到人。公开仓库，所以给 issue 不给邮箱。
+const ISSUE_URL = "https://github.com/netzach-star/inno-l2-editor/issues/new";
+
 const c = { g: "\x1b[32m", r: "\x1b[31m", y: "\x1b[33m", d: "\x1b[2m", x: "\x1b[0m" };
 let pass = 0, fail = 0;
 const failures = [];
@@ -112,7 +115,10 @@ console.log("  ── ① 锚点（按裁定二，这是核心风险控制）─
 		out.split("\n").filter((l) => l.includes("✗")).join("\n      ") ||
 		"（跑 node bridge/apply.mjs <目录> check 看详情）");
 	if (r.status !== 0) {
-		console.log(`\n${c.y}  ↑ 这就是重写清单：上面每一条 ✗ 都是 apply.mjs 里要改的一个锚点。${c.x}\n`);
+		console.log(`\n${c.y}  ↑ 这就是重写清单：上面每一条 ✗ 都是 apply.mjs 里要改的一个锚点。${c.x}`);
+		console.log(`${c.d}     这是本项目要跟进的维护工作，不是你操作有误。`);
+		console.log(`     麻烦开个 issue 把上面这几条贴进去：${c.x}`);
+		console.log(`     ${ISSUE_URL}\n`);
 	}
 }
 
@@ -240,7 +246,9 @@ if (REMOTE) {
 			ok("上游最新 main 上，锚点全部还在", r.status === 0, bad.join("\n      "));
 			if (r.status !== 0) {
 				console.log(`\n${c.y}  ↑ 这就是重写清单。上游已经动过这几处，`);
-				console.log(`     **在把本地 clone 升上去之前**先改 apply.mjs。${c.x}\n`);
+				console.log(`     **在把本地 clone 升上去之前**先改 apply.mjs。${c.x}`);
+				console.log(`${c.d}     也可以开个 issue 让维护者跟进：${c.x}`);
+				console.log(`     ${ISSUE_URL}\n`);
 			}
 		}
 	} finally {

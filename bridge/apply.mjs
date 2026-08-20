@@ -64,6 +64,10 @@ const paths = {
 	newRoutes: join(SRC, "server", "routes", "l2-editor.ts"),
 };
 
+// 锚点断了要能找到人。仓库是公开的，所以给 issue 而不是邮箱——
+// 有编号可追踪、别人遇到同样问题能搜到，也不会把私人地址暴露给爬虫。
+const ISSUE_URL = "https://github.com/netzach-star/inno-l2-editor/issues/new";
+
 const exists = async (p) => { try { await stat(p); return true; } catch { return false; } };
 
 /* ---------------- 前置检查 ---------------- */
@@ -332,7 +336,11 @@ for (const [file, anchor, replacement] of EDITS) {
 	if (hits === 0) {
 		die(
 			`在 ${file.replace(TARGET, "…")} 里找不到锚点`,
-			`上游可能改动了这一处。锚点片段：\n      ${anchor.split("\n")[0].slice(0, 80)}`,
+			`上游改动了这一处。锚点片段：\n      ${anchor.split("\n")[0].slice(0, 80)}\n\n` +
+				`  你的上游一个字节都没被改 —— 所有改动先算完，对不上就中止。\n` +
+				`  **这是本项目要跟进的维护工作，不是你操作有误。**\n\n` +
+				`  麻烦开个 issue 告诉我，把上面这段原样贴进去就够了：\n` +
+				`  ${ISSUE_URL}`,
 		);
 	}
 	if (hits > 1) die(`锚点在 ${file.replace(TARGET, "…")} 里出现了 ${hits} 次，无法确定改哪个`);
