@@ -3,8 +3,6 @@
 给 [InnoSpark](https://github.com/hhyqhh/inno-agent) 的 **L2 Wiki 知识库**补一套更好的写入体验：
 **AI 负责整理，用户负责决定。**
 
-![编辑器主界面](docs/images/editor-main.png)
-
 ---
 
 ## 解决什么问题
@@ -28,36 +26,37 @@ md **始终可手改** —— 系统只托管 frontmatter 的 `tags` 和正文�
 **③ 从资料生成新页，每条都要对得上原文。** 资料先**冻结**（内容寻址 + hash），
 子代理产出的每条都附一句原文引文，服务端逐条核对是不是**精确子串**——
 
-![引文核对](docs/images/editor-review.png)
-
 核不上的**标红拦下、留在界面上**，不会被悄悄删掉。这是为了回答一个很实际的问题：
 **「这条到底是不是它编的？」**
 
 ---
 
-## 第 0 步：先装 InnoSpark
+## 安装
 
-**这个项目是 InnoSpark 的插件，不能单独用。** 它编辑的是 InnoSpark 的 L2 知识库，
-所以得先有一个能跑起来的 InnoSpark。
+### 第 0 步 · 先装 InnoSpark
 
-👉 **[hhyqhh/inno-agent](https://github.com/hhyqhh/inno-agent)** —— 按它自己的说明装，
-装完确认能打开（默认 http://localhost:3000 ）。
+这个项目是 InnoSpark 的插件，不能单独用。上游有三种装法
+（见 [hhyqhh/inno-agent](https://github.com/hhyqhh/inno-agent)）：
 
-**我们的安装器不碰这一步**，它只往一个已经装好的 InnoSpark 里加东西。
+| 上游的装法 | 能用编辑器 | 能装「对话寄存区」 |
+|---|---|---|
+| **源码运行**（`git clone` + `npm run build`） | ✅ | ✅ |
+| 桌面应用（.dmg / .exe） | ✅ 需指定 `INNO_WIKI_DIR` | ❌ |
+| Docker | ✅ 需指定 `INNO_WIKI_DIR` | ❌ |
 
-> 建议把两个仓库放在**同一层目录**下：
+**想要完整功能就用源码运行。** 寄存区要改上游源码并重新构建，桌面版和 Docker 里没有源码目录。
+
+装完确认 InnoSpark 能打开（默认 http://localhost:3000 ），再往下走。
+
+> 建议两个仓库放**同一层**，这样后面所有命令都能直接复制：
 >
 > ```
 > 你的工作目录/
 > ├── inno-agent/          ← InnoSpark
 > └── inno-l2-editor/      ← 这个项目
 > ```
->
-> 这样下面所有命令都能直接复制粘贴，不用改任何路径。
 
----
-
-## 第 1 步：装编辑器
+### 第 1 步 · 装
 
 ```bash
 git clone https://github.com/netzach-star/inno-l2-editor.git
@@ -65,70 +64,55 @@ cd inno-l2-editor
 npm install
 ```
 
-> **只有 `cd` 这一步需要你手动确认位置**，后面的命令都在这个目录里跑，直接复制即可。
-
-## 第 2 步：装「对话寄存区」到 InnoSpark
-
-不装的话，把对话变成 wiki 页只能手动复制粘贴。装上之后 —— 每段 AI 回答下方多一个按钮：
-
-![加入寄存区](docs/images/innospark-stage-button.png)
-
-攒够了在右侧「寄存区」点「开始总结」，自动送到编辑器开始生成：
-
-![寄存区](docs/images/innospark-staging-panel.png)
-
 ```bash
 ./bridge/install.sh
 ```
 
-**不用填路径**——脚本会自己找旁边的 InnoSpark，找到会打印出来给你看。
-找不到或找到多个时它会停下来问你，那时再传目录：
+### 第 2 步 · 起 InnoSpark
 
 ```bash
-./bridge/install.sh ~/你的/inno-agent
+cd ../inno-agent && ./restart-dev.sh restart --mode prod
 ```
 
-装完按它的提示重启 InnoSpark。卸载：
+### 第 3 步 · 起编辑器
+
+```bash
+cd ../inno-l2-editor && node server.mjs
+```
+
+打开 **http://localhost:4321** 。
+
+---
+
+### 卸载
 
 ```bash
 ./bridge/install.sh --uninstall
 ```
 
-脚本**幂等**（装过会跳过）、**可逆**（卸载后 `git status` 逐字节干净）、**不硬来**
-（所有改动先算完，任一锚点对不上就中止、一个字节都不写，并指明是哪个文件哪段）。
-改动量压到最小：新增 2 个文件、改动 5 个。InnoSpark 侧只负责攒和交，
-编译、核对、落盘全在这边。
+### 装在别处
 
-> **上游动得比想象中快。** 装之前可以先跑一次抗漂移自检，它的输出直接就是修复清单：
->
-> ```bash
-> node check-upstream.mjs
-> ```
->
-> 锚点是按**内容**匹配的，所以上游重构时它顶多"找不到"并中止，**不会写坏你的上游**。
-
-## 第 3 步：起编辑器
+上面的命令假设两个仓库同层。不同层的话把目录传进去：
 
 ```bash
-node server.mjs
-```
-
-打开 http://localhost:4321 。
-
-**同样不用填路径**——它会自己找旁边的 InnoSpark，界面左上角会**如实显示**
-正在编辑哪一份知识库。
-
-放在别处、或者想显式指定，用环境变量：
-
-```bash
+./bridge/install.sh ~/你的/inno-agent
 INNO_AGENT_DIR=~/你的/inno-agent node server.mjs
 ```
 
-指对了，编辑的就是它的真实 L2，模型配置也和主代理**同一份**（两边各读各的会出现主代理 401
-而这边显示「已配置」的怪事，踩过一次）。
+上游是**桌面版或 Docker** 装的，直接指知识库目录：
 
-**一个 InnoSpark 都找不到时也能跑**，此时编辑仓库自带的三页示例，
-左上角橙色标明「非真实库」——不会假装在编辑真东西。
+```bash
+INNO_WIKI_DIR=~/.inno-agent/data/l2/wiki node server.mjs
+```
+
+### 装之前可以先自检
+
+```bash
+node check-upstream.mjs
+```
+
+上游改动很频繁（实测一天就能断锚点）。这条命令的输出直接就是修复清单。
+锚点按**内容**匹配，所以上游重构时它顶多"找不到"并中止，**不会写坏你的上游**。
 
 ---
 

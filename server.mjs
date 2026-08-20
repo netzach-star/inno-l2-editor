@@ -1,4 +1,4 @@
-// 最小闭环原型：读真实 wiki md → 渲染 → 结构化改 tag / 关联 → 写回 md
+// inno-l2-editor：读真实 wiki md → 渲染 → 结构化改 tag / 关联 → 写回 md
 // 核心零依赖，只用 Node 内置模块。不连数据库、不做发布语义。
 // 唯一的例外是 POST /api/polish：它惰性导入 polish-agent.mjs 唤起隔离子代理，
 // 没装依赖 / 没配模型时如实报错，其余功能不受影响（ADR-V2-022）。
