@@ -49,7 +49,9 @@ const SRC = join(TARGET, "apps", "inno-agent", "src");
 const paths = {
 	appStore: join(WEB, "stores", "app-store.ts"),
 	workspacePanel: join(WEB, "react", "WorkspacePanel.tsx"),
-	chatCenter: join(WEB, "react", "ChatCenter.tsx"),
+	// 2026-08-20：上游 9038edf「split chat modules」把消息列表从 ChatCenter.tsx
+	// 拆进了 chat/ChatConversation.tsx。锚点那一行**逐字节没变**，只是搬了家。
+	chatConversation: join(WEB, "react", "chat", "ChatConversation.tsx"),
 	zh: join(WEB, "i18n", "locales", "zh-CN.json"),
 	en: join(WEB, "i18n", "locales", "en.json"),
 	newStore: join(WEB, "stores", "staging-store.ts"),
@@ -69,7 +71,7 @@ const exists = async (p) => { try { await stat(p); return true; } catch { return
 if (!(await exists(join(TARGET, "package.json")))) {
 	die(`${TARGET} 里没有 package.json`, "第一个参数要指向 InnoSpark 的安装目录（有 restart-dev.sh 的那一层）");
 }
-for (const key of ["appStore", "workspacePanel", "chatCenter", "messageBubble", "zh", "en", "server", "wikiLinker"]) {
+for (const key of ["appStore", "workspacePanel", "chatConversation", "messageBubble", "zh", "en", "server", "wikiLinker"]) {
 	if (!(await exists(paths[key]))) {
 		die(`找不到 ${paths[key]}`, "这看起来不像 InnoSpark 的代码结构，确认目录是否正确");
 	}
@@ -114,13 +116,15 @@ const EDITS = [
 
 	// ── 2026-08-08 重锚：StageButton 搬进 MessageBubble.tsx ──
 	//
-	// 上游把 MessageBubble 从 ChatCenter.tsx 抽成了独立组件。这反而是好事：
-	// ChatCenter.tsx 是上游最爱动的文件（两个月改了 34 次，v1.1.0 那次锚点断掉就在这），
-	// 现在它只剩**一个**锚点——把 question 传下去。
+	// 上游把 MessageBubble 抽成了独立组件，消息列表又在 9038edf 里从 ChatCenter.tsx
+	// 拆进 chat/ChatConversation.tsx。我们在这条链上始终只有**一个**锚点——把 question 传下去。
+	//
+	// 两次搬家锚点内容都没变，只是文件换了。这印证了裁定二的取舍：
+	// 锚点按**内容**匹配、不按行号，所以上游重构时它顶多"找不到"，不会静默错配。
 	//
 	// question 用内联表达式算，不再另加 findQuestionFor 辅助函数：
 	// 少一个锚点，就少一处会断的地方。
-	[paths.chatCenter,
+	[paths.chatConversation,
 		`<MessageBubble message={message} showChannel={multiChannel} />`,
 		`<MessageBubble message={message} question={[...chat.messages.slice(0, index)].reverse().find((m) => m.role === "user")?.content ?? ""} showChannel={multiChannel} />`],
 
