@@ -33,7 +33,8 @@ import { spawnSync } from "node:child_process";
 import { readdir } from "node:fs/promises";
 import { existsSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { dirname, join } from "node:path";
+import { dirname, join, resolve as resolvePath } from "node:path";
+import { homedir } from "node:os";
 import { fileURLToPath } from "node:url";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -43,11 +44,51 @@ const REMOTE = flags.includes("--remote");
 const UPSTREAM_URL = process.env.UPSTREAM_REPO ?? "https://github.com/hhyqhh/inno-agent";
 const UP = process.env.UPSTREAM ?? "http://localhost:3000";
 
-if (!rawTarget) {
-	console.error("\n  用法：node check-upstream.mjs <inno-agent 目录> [--full]\n");
-	process.exit(1);
+/**
+ * 不给目录就自己找一下——和 bridge/install.sh、server.mjs 用的是同一套判据：
+ * 要有 package.json，且有 restart-dev.sh 或 apps/inno-agent 之一。
+ * 找到多个就不猜，让用户显式指定。
+ */
+function autoDetectAgentDir() {
+	const looksRight = (d) =>
+		existsSync(join(d, "package.json")) &&
+		(existsSync(join(d, "restart-dev.sh")) || existsSync(join(d, "apps", "inno-agent")));
+	const seen = new Set();
+	const hits = [];
+	for (const cand of [
+		process.env.INNO_AGENT_DIR,
+		join(HERE, "..", "inno-agent"),
+		join(process.cwd(), "..", "inno-agent"),
+		join(process.cwd(), "inno-agent"),
+		join(homedir(), "inno-agent"),
+	]) {
+		if (!cand) continue;
+		const abs = resolvePath(cand);
+		if (seen.has(abs)) continue;
+		seen.add(abs);
+		if (existsSync(abs) && looksRight(abs)) hits.push(abs);
+	}
+	return hits.length === 1 ? hits[0] : hits;
 }
-const TARGET = rawTarget.replace(/\/+$/, "");
+
+let target = rawTarget;
+if (!target) {
+	const found = autoDetectAgentDir();
+	if (typeof found === "string") {
+		target = found;
+		console.log(`\n  自动找到 InnoSpark：${found}`);
+	} else if (found.length === 0) {
+		console.error("\n  用法：node check-upstream.mjs [inno-agent 目录] [--full]");
+		console.error("  （不给目录时会自动找旁边的 InnoSpark，这次没找到）\n");
+		process.exit(1);
+	} else {
+		console.error("\n  找到多个 InnoSpark，不替你猜用哪个：");
+		for (const f of found) console.error(`      ${f}`);
+		console.error("\n  把要检查的那个传进来： node check-upstream.mjs <目录>\n");
+		process.exit(1);
+	}
+}
+const TARGET = target.replace(/\/+$/, "");
 
 const c = { g: "\x1b[32m", r: "\x1b[31m", y: "\x1b[33m", d: "\x1b[2m", x: "\x1b[0m" };
 let pass = 0, fail = 0;

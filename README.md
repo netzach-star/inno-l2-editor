@@ -35,7 +35,29 @@ md **始终可手改** —— 系统只托管 frontmatter 的 `tags` 和正文�
 
 ---
 
-## 安装
+## 第 0 步：先装 InnoSpark
+
+**这个项目是 InnoSpark 的插件，不能单独用。** 它编辑的是 InnoSpark 的 L2 知识库，
+所以得先有一个能跑起来的 InnoSpark。
+
+👉 **[hhyqhh/inno-agent](https://github.com/hhyqhh/inno-agent)** —— 按它自己的说明装，
+装完确认能打开（默认 http://localhost:3000 ）。
+
+**我们的安装器不碰这一步**，它只往一个已经装好的 InnoSpark 里加东西。
+
+> 建议把两个仓库放在**同一层目录**下：
+>
+> ```
+> 你的工作目录/
+> ├── inno-agent/          ← InnoSpark
+> └── inno-l2-editor/      ← 这个项目
+> ```
+>
+> 这样下面所有命令都能直接复制粘贴，不用改任何路径。
+
+---
+
+## 第 1 步：装编辑器
 
 ```bash
 git clone https://github.com/netzach-star/inno-l2-editor.git
@@ -43,19 +65,9 @@ cd inno-l2-editor
 npm install
 ```
 
-```bash
-INNO_AGENT_DIR=/path/to/inno-agent node server.mjs
-```
+> **只有 `cd` 这一步需要你手动确认位置**，后面的命令都在这个目录里跑，直接复制即可。
 
-打开 http://localhost:4321 。
-
-`INNO_AGENT_DIR` 指向 InnoSpark 安装目录（有 `restart-dev.sh` 的那一层）。指对了，
-编辑的就是它的真实 L2，模型配置也和主代理**同一份**（两边各读各的会出现主代理 401
-而这边显示「已配置」的怪事，踩过一次）。
-
-不设也能跑，此时编辑仓库自带的三页示例，左上角橙色标明「非真实库」。
-
-## 装上「对话寄存区」
+## 第 2 步：装「对话寄存区」到 InnoSpark
 
 不装的话，把对话变成 wiki 页只能手动复制粘贴。装上之后 —— 每段 AI 回答下方多一个按钮：
 
@@ -66,16 +78,57 @@ INNO_AGENT_DIR=/path/to/inno-agent node server.mjs
 ![寄存区](docs/images/innospark-staging-panel.png)
 
 ```bash
-./bridge/install.sh /path/to/inno-agent
-cd /path/to/inno-agent && ./restart-dev.sh restart --mode prod
+./bridge/install.sh
 ```
 
-卸载：`./bridge/install.sh /path/to/inno-agent --uninstall`
+**不用填路径**——脚本会自己找旁边的 InnoSpark，找到会打印出来给你看。
+找不到或找到多个时它会停下来问你，那时再传目录：
+
+```bash
+./bridge/install.sh ~/你的/inno-agent
+```
+
+装完按它的提示重启 InnoSpark。卸载：
+
+```bash
+./bridge/install.sh --uninstall
+```
 
 脚本**幂等**（装过会跳过）、**可逆**（卸载后 `git status` 逐字节干净）、**不硬来**
 （所有改动先算完，任一锚点对不上就中止、一个字节都不写，并指明是哪个文件哪段）。
 改动量压到最小：新增 2 个文件、改动 5 个。InnoSpark 侧只负责攒和交，
 编译、核对、落盘全在这边。
+
+> **上游动得比想象中快。** 装之前可以先跑一次抗漂移自检，它的输出直接就是修复清单：
+>
+> ```bash
+> node check-upstream.mjs
+> ```
+>
+> 锚点是按**内容**匹配的，所以上游重构时它顶多"找不到"并中止，**不会写坏你的上游**。
+
+## 第 3 步：起编辑器
+
+```bash
+node server.mjs
+```
+
+打开 http://localhost:4321 。
+
+**同样不用填路径**——它会自己找旁边的 InnoSpark，界面左上角会**如实显示**
+正在编辑哪一份知识库。
+
+放在别处、或者想显式指定，用环境变量：
+
+```bash
+INNO_AGENT_DIR=~/你的/inno-agent node server.mjs
+```
+
+指对了，编辑的就是它的真实 L2，模型配置也和主代理**同一份**（两边各读各的会出现主代理 401
+而这边显示「已配置」的怪事，踩过一次）。
+
+**一个 InnoSpark 都找不到时也能跑**，此时编辑仓库自带的三页示例，
+左上角橙色标明「非真实库」——不会假装在编辑真东西。
 
 ---
 

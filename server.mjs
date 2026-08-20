@@ -9,7 +9,8 @@
 
 import { createServer } from "node:http";
 import { readFile, writeFile, readdir, stat, mkdir } from "node:fs/promises";
-import { join, dirname, relative, sep } from "node:path";
+import { join, dirname, relative, sep, resolve as resolvePath } from "node:path";
+import { homedir } from "node:os";
 import { existsSync } from "node:fs";
 import { createHash } from "node:crypto";
 import { fileURLToPath } from "node:url";
@@ -29,6 +30,35 @@ const ROOT = dirname(fileURLToPath(import.meta.url));
  * 第 2 条才是这个插件的正经用法——它要编辑的就是 InnoSpark 那份真实知识库。
  * 第 3 条只是没装 InnoSpark 时也能打开看看，不要拿它当产品形态。
  */
+/**
+ * 找旁边有没有 InnoSpark。**只在没设 INNO_AGENT_DIR 时才用。**
+ *
+ * 判据要两条一起看：光有 package.json 的目录满地都是，
+ * 必须再有 restart-dev.sh 或 apps/inno-agent 才算数。
+ * 找到多个就**一个都不用**——宁可让用户显式指定，也不猜他要编辑哪一份知识库。
+ */
+function autoDetectAgentDir() {
+	const looksRight = (d) =>
+		existsSync(join(d, "package.json")) &&
+		(existsSync(join(d, "restart-dev.sh")) || existsSync(join(d, "apps", "inno-agent")));
+
+	const seen = new Set();
+	const hits = [];
+	for (const c of [
+		join(ROOT, "..", "inno-agent"),
+		join(process.cwd(), "..", "inno-agent"),
+		join(process.cwd(), "inno-agent"),
+		join(homedir(), "inno-agent"),
+	]) {
+		let abs;
+		try { abs = resolvePath(c); } catch { continue; }
+		if (seen.has(abs)) continue;
+		seen.add(abs);
+		if (existsSync(abs) && looksRight(abs)) hits.push(abs);
+	}
+	return hits.length === 1 ? hits[0] : null;
+}
+
 function resolveWikiDir() {
 	if (process.env.INNO_WIKI_DIR) {
 		return { dir: process.env.INNO_WIKI_DIR, from: "环境变量 INNO_WIKI_DIR", live: true };
@@ -38,6 +68,18 @@ function resolveWikiDir() {
 			dir: join(process.env.INNO_AGENT_DIR, "runtime", "data", "l2", "wiki"),
 			from: "InnoSpark 的真实 L2 知识库",
 			live: true,
+		};
+	}
+	// 没设环境变量就自己找一下：绝大多数人是把两个仓库放在同一层的。
+	// 找到了**如实说是自动找到的**，界面上照样显示具体路径——
+	// 自动不等于可以含糊（红线 3）。找不到就继续往下走沙盒，不报错。
+	const auto = autoDetectAgentDir();
+	if (auto) {
+		return {
+			dir: join(auto, "runtime", "data", "l2", "wiki"),
+			from: "自动找到的 InnoSpark",
+			live: true,
+			auto,
 		};
 	}
 	// data/wiki 是本地开发用的沙盒（不进仓库）；sample/wiki 是仓库自带的中性样例
