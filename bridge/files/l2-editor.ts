@@ -44,6 +44,9 @@ import { join } from "node:path";
 
 import type { InnoConfig } from "../../config.js";
 import { getSession } from "../../agent/pi-runner.js";
+// 2026-08-20：PI SDK 0.84.2 起 AgentSession 不再直接挂 modelRegistry，
+// 它变成了包在 ModelRuntime 外面的「同步兼容外观」，要自己 new 出来。见下面 forwardContext()。
+import { ModelRegistry } from "@earendil-works/pi-coding-agent";
 import { createL2Tools } from "../../memory/l2/l2-tools.js";
 import { getL2Memory } from "../../memory/l2/l2-memory.js";
 import { slugifyTitle } from "../../memory/l2/wiki-linker.js";
@@ -97,7 +100,14 @@ function forwardContext(): never | Record<string, unknown> {
 	return {
 		// 真实的两个：和上游 agent 调 l2_archive 时用的是同一个模型
 		model: session.model,
-		modelRegistry: session.modelRegistry,
+		// PI SDK 0.84.2（上游 b7c3864 升的）把 AgentSession.modelRegistry 拿掉了，
+		// 换成 AgentSession.modelRuntime；ModelRegistry 降级成一个包在它外面的兼容外观
+		// （model-registry.d.ts 的类注释原文："Synchronous compatibility facade exposed to extensions"）。
+		// 这里照 SDK 自己的造法来——agent-session.js:2037 就是
+		//   new ExtensionRunner(…, new ModelRegistry(this._modelRuntime))
+		// **不要**自己拼一个鸭子类型的对象：ctx 里这个字段是给 l2_archive 解析 API key 用的，
+		// 拼错了会在真实归档的最后一米静默失败。
+		modelRegistry: new ModelRegistry(session.modelRuntime),
 		// 其余：出现即报错
 		get ui() { return notHere("ui")(); },
 		mode: "rpc",
